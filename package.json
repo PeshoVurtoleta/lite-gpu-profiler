@@ -1,0 +1,75 @@
+{
+  "name": "@zakkster/lite-gpu-profiler",
+  "version": "1.0.0",
+  "description": "Zero-GC WebGL2 render-path telemetry. Deterministic command counters (draw calls, instances, floats uploaded) recorded in the GL-agnostic core, plus an async EXT_disjoint_timer_query_webgl2 GPU-time pool. Passive instrument; pairs with lite-vram (the manager). Gates through the same matrix as lite-profiler.",
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "node": "./index.js",
+      "import": "./index.js",
+      "default": "./index.js"
+    },
+    "./timer": {
+      "types": "./GpuTimerPool.d.ts",
+      "node": "./GpuTimerPool.js",
+      "import": "./GpuTimerPool.js",
+      "default": "./GpuTimerPool.js"
+    }
+  },
+  "files": [
+    "GpuProfiler.js",
+    "GpuProfiler.d.ts",
+    "GpuTimerPool.js",
+    "GpuTimerPool.d.ts",
+    "GpuGate.js",
+    "GpuGate.d.ts",
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "llms.txt",
+    "CHANGELOG.md",
+    "LICENSE.txt"
+  ],
+  "scripts": {
+    "test": "node --test --test-reporter=spec 'test/*.test.mjs'",
+    "test:gc": "node --expose-gc --test --test-reporter=spec 'test/*.test.mjs'"
+  },
+  "keywords": [
+    "webgl2",
+    "gpu",
+    "profiler",
+    "telemetry",
+    "timer-query",
+    "zero-gc",
+    "draw-calls",
+    "instanced",
+    "lite-gl",
+    "performance"
+  ],
+  "dependencies": {
+    "@zakkster/lite-ring-buffer": "^1.0.1",
+    "@zakkster/lite-stats-math": "^1.0.1"
+  },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-gpu-profiler.git"
+  },
+  "homepage": "https://github.com/PeshoVurtoleta/lite-gpu-profiler#readme",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/PeshoVurtoleta"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

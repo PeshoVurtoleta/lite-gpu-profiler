@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>lite-gpu-profiler // GPU telemetry scope</title>
+    <style>
+        :root {
+            --bg: #05080a;
+            --panel: #0a1013;
+            --grid: #0e1a1e;
+            --phos: #17c98a; /* hex fallback first */
+            --phos: oklch(0.78 0.16 165);
+            --phos-dim: #0c6b4c;
+            --phos-dim: oklch(0.5 0.11 165);
+            --amber: #f0a020;
+            --amber: oklch(0.78 0.15 75);
+            --red: #ff5a52;
+            --red: oklch(0.68 0.2 25);
+            --ink: #7fb8a6;
+            --ink: oklch(0.72 0.05 165);
+            --edge: #123;
+            --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+        }
+
+        body {
+            background: repeating-linear-gradient(0deg, transparent, transparent 1.4rem, var(--grid) 1.4rem, var(--grid) calc(1.4rem + 1px)),
+            repeating-linear-gradient(90deg, transparent, transparent 1.4rem, var(--grid) 1.4rem, var(--grid) calc(1.4rem + 1px)),
+            var(--bg);
+            color: var(--ink);
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            line-height: 1.5;
+            padding: 1.2rem;
+            min-height: 100vh;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            border-bottom: 1px solid var(--phos-dim);
+            padding-bottom: 0.7rem;
+        }
+
+        h1 {
+            font-size: 1.05rem;
+            margin: 0;
+            color: var(--phos);
+            letter-spacing: 0.06em;
+            text-shadow: 0 0 0.6rem color-mix(in oklch, var(--phos) 55%, transparent);
+        }
+
+        .tag {
+            color: var(--ink);
+            font-size: 0.76rem;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            background: var(--phos);
+            box-shadow: 0 0 0.5rem var(--phos);
+            animation: blink 1.6s steps(2, jump-none) infinite;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0.25;
+            }
+        }
+
+        #tabs {
+            display: flex;
+            gap: 0.4rem;
+            margin: 0.9rem 0;
+            flex-wrap: wrap;
+        }
+
+        #tabs button {
+            font: inherit;
+            color: var(--ink);
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            border-radius: 0.3rem;
+            padding: 0.35rem 0.8rem;
+            cursor: pointer;
+            letter-spacing: 0.05em;
+        }
+
+        #tabs button[aria-selected="true"] {
+            color: var(--bg);
+            background: var(--phos);
+            border-color: var(--phos);
+            box-shadow: 0 0 0.7rem color-mix(in oklch, var(--phos) 45%, transparent);
+        }
+
+        @media (hover: hover) {
+            #tabs button:not([aria-selected="true"]):hover {
+                border-color: var(--phos-dim);
+                color: var(--phos);
+            }
+        }
+
+        .scene {
+            display: none;
+        }
+
+        .scene.active {
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+            align-items: start;
+        }
+
+        @media (max-width: 720px) {
+            .scene.active {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--edge);
+            border-radius: 0.5rem;
+            padding: 0.9rem;
+        }
+
+        .panel h2 {
+            font-size: 0.72rem;
+            margin: 0 0 0.7rem;
+            color: var(--phos);
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            font-weight: 600;
+        }
+
+        .panel h2.gap-top {
+            margin-top: 1rem;
+        }
+
+        .full {
+            grid-column: 1 / -1;
+        }
+
+        .lede {
+            color: var(--ink);
+            font-size: 0.78rem;
+            margin: 0 0 0.8rem;
+        }
+
+        .lede.gap-top {
+            margin-top: 0.8rem;
+        }
+
+        .lede b {
+            color: var(--amber);
+            font-weight: 600;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            border: 1px solid var(--phos-dim);
+            border-radius: 0.4rem;
+            background: #02060a;
+            box-shadow: inset 0 0 2.4rem color-mix(in oklch, var(--phos) 8%, transparent);
+        }
+
+        #gl {
+            aspect-ratio: 16 / 10;
+        }
+
+        #scope {
+            aspect-ratio: 16 / 7;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.28rem 0;
+            border-bottom: 1px dashed var(--edge);
+        }
+
+        .row:last-child {
+            border-bottom: 0;
+        }
+
+        .row span {
+            color: var(--ink);
+        }
+
+        .row b {
+            color: var(--phos);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .row b.warn {
+            color: var(--amber);
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .controls.gap-top {
+            margin-top: 0.8rem;
+        }
+
+        .seg-label {
+            align-self: center;
+            color: var(--ink);
+        }
+
+        .controls button, .seg button {
+            font: inherit;
+            color: var(--ink);
+            background: #071013;
+            border: 1px solid var(--edge);
+            border-radius: 0.3rem;
+            padding: 0.3rem 0.7rem;
+            cursor: pointer;
+        }
+
+        @media (hover: hover) {
+            .controls button:hover, .seg button:hover {
+                border-color: var(--phos-dim);
+                color: var(--phos);
+            }
+        }
+
+        .seg {
+            display: inline-flex;
+            border: 1px solid var(--edge);
+            border-radius: 0.3rem;
+            overflow: hidden;
+        }
+
+        .seg button {
+            border: 0;
+            border-right: 1px solid var(--edge);
+            border-radius: 0;
+        }
+
+        .seg button:last-child {
+            border-right: 0;
+        }
+
+        .seg button[aria-pressed="true"] {
+            color: var(--bg);
+            background: var(--phos);
+        }
+
+        .primary {
+            color: var(--bg) !important;
+            background: var(--phos) !important;
+            border-color: var(--phos) !important;
+        }
+
+        .verdict {
+            text-align: center;
+            padding: 0.9rem;
+            border-radius: 0.4rem;
+            border: 1px solid var(--edge);
+            margin-bottom: 0.7rem;
+        }
+
+        .verdict .big {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+        }
+
+        .verdict.pass {
+            border-color: var(--phos-dim);
+        }
+
+        .verdict.pass .big {
+            color: var(--phos);
+            text-shadow: 0 0 0.8rem color-mix(in oklch, var(--phos) 45%, transparent);
+        }
+
+        .verdict.fail {
+            border-color: var(--red);
+            background: color-mix(in oklch, var(--red) 8%, transparent);
+        }
+
+        .verdict.fail .big {
+            color: var(--red);
+            text-shadow: 0 0 0.8rem color-mix(in oklch, var(--red) 45%, transparent);
+        }
+
+        .verdict.idle .big {
+            color: var(--ink);
+        }
+
+        .sub {
+            font-size: 0.74rem;
+            color: var(--ink);
+            margin-top: 0.3rem;
+            min-height: 1.1rem;
+        }
+
+        .gaterow {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.3rem 0.5rem;
+            border-radius: 0.3rem;
+            margin-top: 0.35rem;
+            border: 1px solid var(--edge);
+        }
+
+        .gaterow.ok {
+            border-color: var(--phos-dim);
+        }
+
+        .gaterow.bad {
+            border-color: var(--red);
+            background: color-mix(in oklch, var(--red) 8%, transparent);
+        }
+
+        .gaterow .k {
+            color: var(--ink);
+        }
+
+        .gaterow .v {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .gaterow.ok .v {
+            color: var(--phos);
+        }
+
+        .gaterow.bad .v {
+            color: var(--red);
+        }
+
+        pre#summaryOut {
+            margin: 0;
+            white-space: pre-wrap;
+            color: var(--phos);
+            font-size: 0.76rem;
+            line-height: 1.6;
+        }
+
+        .note {
+            color: var(--amber);
+            font-size: 0.74rem;
+        }
+
+        footer {
+            margin-top: 1.1rem;
+            padding-top: 0.7rem;
+            border-top: 1px solid var(--edge);
+            color: var(--phos-dim);
+            font-size: 0.72rem;
+        }
+
+        a {
+            color: var(--phos);
+        }
+    </style>
+    <script type="importmap">
+{
+  "imports": {
+    "@zakkster/lite-ring-buffer": "https://esm.sh/@zakkster/lite-ring-buffer@1",
+    "@zakkster/lite-stats-math": "https://esm.sh/@zakkster/lite-stats-math@1",
+    "@zakkster/lite-gpu-profiler": "../index.js",
+    "@zakkster/lite-gpu-profiler/timer": "../GpuTimerPool.js"
+  }
+}
+
+    </script>
+</head>
+<body>
+<header>
+    <span class="dot"></span>
+    <h1>lite-gpu-profiler</h1>
+    <span class="tag">WebGL2 render-path telemetry // the counter that catches what timing can't</span>
+</header>
+
+<nav id="tabs" role="tablist">
+    <button role="tab" data-scene="dirty" aria-selected="true">DIRTY-RANGE</button>
+    <button role="tab" data-scene="scope" aria-selected="false">GPU SCOPE</button>
+    <button role="tab" data-scene="summary" aria-selected="false">SUMMARY</button>
+</nav>
+
+<main>
+    <!-- SCENE 1: the hero -->
+    <section class="scene active" data-scene="dirty">
+        <div class="panel">
+            <h2>live field // WebGL2 instanced points</h2>
+            <canvas id="gl"></canvas>
+            <p class="lede gap-top">Both modes render the <b>same pixels</b>. Only the <b>amber block (512
+                points)</b> ever changes, so NUDGE uploads exactly 512 x 8 = <b>4,096 floats</b> per frame.
+                REBUILD re-uploads the whole buffer -- the GPU draw timer <b>can't tell them apart</b>; the
+                upload counter can.</p>
+            <div class="controls">
+                <span class="seg-label">upload mode:</span>
+                <span class="seg" id="mode">
+            <button data-mode="nudge">NUDGE (dirty range)</button>
+            <button data-mode="rebuild">REBUILD (naive)</button>
+          </span>
+            </div>
+            <div class="controls">
+                <span class="seg-label">points:</span>
+                <span class="seg" id="count">
+            <button data-count="100000">100k</button>
+            <button data-count="250000">250k</button>
+            <button data-count="500000">500k</button>
+          </span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>counters // this frame</h2>
+            <div class="row"><span>floats uploaded</span><b id="cUpload">0</b></div>
+            <div class="row"><span>upload bandwidth</span><b id="cBand">--</b></div>
+            <div class="row"><span>draw calls</span><b id="cDraws">0</b></div>
+            <div class="row"><span>instances drawn</span><b id="cInst">0</b></div>
+            <div class="row"><span>GPU time p99 (window)</span><b id="cGpu">--</b></div>
+
+            <h2 class="gap-top">regression gate</h2>
+            <div class="verdict idle" id="verdict">
+                <div class="big" id="verdictBig">NO BASELINE</div>
+                <div class="sub" id="verdictSub">capture a baseline in NUDGE mode, then flip to REBUILD</div>
+            </div>
+            <div id="gateRows"></div>
+            <div class="controls gap-top">
+                <button id="capture" class="primary">CAPTURE BASELINE</button>
+                <button id="clearBase">clear</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- SCENE 2: the moat -->
+    <section class="scene" data-scene="scope">
+        <div class="panel">
+            <h2>GPU time // per-frame trace</h2>
+            <canvas id="scope"></canvas>
+            <p class="lede gap-top" id="scopeLede">Real <b>EXT_disjoint_timer_query_webgl2</b> -- results resolve a
+                few frames late; disjoint frames are dropped. The timer wraps <b>only the draw</b>: REBUILD's wasted
+                upload bandwidth never shows on this trace. That blind spot is why the counters exist.</p>
+            <div class="controls">
+                <span class="seg-label">stress:</span>
+                <span class="seg" id="count2">
+            <button data-count="100000">100k</button>
+            <button data-count="250000">250k</button>
+            <button data-count="500000">500k</button>
+          </span>
+            </div>
+        </div>
+        <div class="panel">
+            <h2>timer pool</h2>
+            <div class="row"><span>timer supported</span><b id="sSupported">--</b></div>
+            <div class="row"><span>GPU time avg</span><b id="sAvg">--</b></div>
+            <div class="row"><span>GPU time p99</span><b id="sP99">--</b></div>
+            <div class="row"><span>GPU time max</span><b id="sMax">--</b></div>
+            <div class="row"><span>resolved samples</span><b id="sSamples">0</b></div>
+            <div class="row"><span>frames</span><b id="sFrames">0</b></div>
+            <div class="row"><span>trace source</span><b id="sSource">--</b></div>
+            <p class="lede gap-top">samples trail frames: queries resolve on a lag, and the frames
+                lost to lag or disjoint never produce a sample. That gap is honest, not a bug.</p>
+        </div>
+    </section>
+
+    <!-- SCENE 3: what the matrix gates -->
+    <section class="scene" data-scene="summary">
+        <div class="panel full">
+            <h2>GpuProfiler.summary() // what the version matrix gates</h2>
+            <pre id="summaryOut">collecting...</pre>
+        </div>
+    </section>
+</main>
+
+<footer>
+    lite-gpu-profiler // counters recorded headlessly in the GL-agnostic core (deterministic, matrix-gated) -- GPU time
+    from the browser-only timer pool. Run: <code>npx serve .</code> from the package root.
+</footer>
+
+<script type="module">
+    import {GpuProfiler, checkGpuRegression} from '@zakkster/lite-gpu-profiler';
+    import {GpuTimerPool} from '@zakkster/lite-gpu-profiler/timer';
+
+    /* ---- constants ---- */
+    const STRIDE = 8;                 // floats per point: x,y,size,r,g,b,a,pad (mirrors lite-gl LAYOUT.POINT)
+    const CAP = 500000;               // max points the buffer holds
+    const ANIM = 512;                 // contiguous block that actually moves (the dirty range in NUDGE)
+    const TELEMETRY_MASK = 7;         // ~7.5Hz telemetry at 60fps
+    const P99_TOL = 0.15;
+    const BUDGET_MS = 16.7;           // one 60fps frame
+
+    /* ---- cached DOM (all lookups at init) ---- */
+    const $tabs = document.getElementById('tabs');
+    const $scenes = document.querySelectorAll('.scene');
+    const $glCanvas = document.getElementById('gl');
+    const $scopeCanvas = document.getElementById('scope');
+    const $mode = document.getElementById('mode');
+    const $count = document.getElementById('count');
+    const $count2 = document.getElementById('count2');
+    const $capture = document.getElementById('capture');
+    const $clearBase = document.getElementById('clearBase');
+    const $cUpload = document.getElementById('cUpload');
+    const $cBand = document.getElementById('cBand');
+    const $cDraws = document.getElementById('cDraws');
+    const $cInst = document.getElementById('cInst');
+    const $cGpu = document.getElementById('cGpu');
+    const $verdict = document.getElementById('verdict');
+    const $verdictBig = document.getElementById('verdictBig');
+    const $verdictSub = document.getElementById('verdictSub');
+    const $gateRows = document.getElementById('gateRows');
+    const $summaryOut = document.getElementById('summaryOut');
+    const $scopeLede = document.getElementById('scopeLede');
+    const $sSupported = document.getElementById('sSupported');
+    const $sAvg = document.getElementById('sAvg');
+    const $sP99 = document.getElementById('sP99');
+    const $sMax = document.getElementById('sMax');
+    const $sSamples = document.getElementById('sSamples');
+    const $sFrames = document.getElementById('sFrames');
+    const $sSource = document.getElementById('sSource');
+
+    /* ---- theme colors for canvas (read once; resolves the oklch/hex cascade) ---- */
+    const rootStyle = getComputedStyle(document.documentElement);
+    const PHOS = rootStyle.getPropertyValue('--phos').trim() || '#17c98a';
+    const AMBER = rootStyle.getPropertyValue('--amber').trim() || '#f0a020';
+    const RED = rootStyle.getPropertyValue('--red').trim() || '#ff5a52';
+    const INK = rootStyle.getPropertyValue('--ink').trim() || '#7fb8a6';
+
+    /* ---- state ---- */
+    let mode = 'nudge';
+    let count = 100000;
+    let baseline = null;
+    let activeScene = 'dirty';
+    let frameCount = 0;
+
+    /* ---- WebGL2 setup ---- */
+    const gl = $glCanvas.getContext('webgl2', {antialias: true, powerPreference: 'high-performance'});
+    const data = new Float32Array(CAP * STRIDE);
+    const baseX = new Float32Array(ANIM);
+    const baseY = new Float32Array(ANIM);
+
+    // CPU frame-time ring (fallback trace when the GPU timer is unavailable) -- power-of-2, bitmask indexed
+    const CPU_N = 256, CPU_MASK = 255;
+    const cpuRing = new Float64Array(CPU_N);
+    let cpuHead = 0, cpuCount = 0, lastFrameTs = 0;
+
+    const profiler = new GpuProfiler(256, {counters: ['drawCalls', 'instances', 'floatsUploaded']});
+    let timerPool = null;
+    let sink = null;
+
+    const scopeCtx = $scopeCanvas.getContext('2d');
+    const gpuCopy = new Float32Array(256);        // scratch for reading the gpu-ms ring (no per-draw alloc)
+    let scopeFont = '20px ui-monospace, monospace';
+    let scopeLedeFallbackSet = false;
+    let lastGpuSampleTs = 0;                      // freshness stamp: a stalled timer must not freeze the scope
+    const GPU_STALE_MS = 1000;
+    const DASH_BUDGET = [6, 6];                   // hoisted: no per-frame array allocation
+    const DASH_P99 = [3, 5];
+    const NODASH = [];
+
+    // scope overlay caches: numbers updated per frame, STRINGS only at ~7.5Hz (no per-frame toFixed)
+    let scaleMaxLive = 2;             // top of scale in ms, written by drawScope, read by updateTelemetry
+    let scopeP99 = 0;                 // last known p99 (ms) for the marker line
+    let msDivLabel = '';              // e.g. "0.42 ms/div"
+    let p99Label = '';                // e.g. "p99 0.86 ms"
+    let sourceLabel = '';             // "EXT_disjoint_timer_query" | "CPU frame time (fallback)"
+    let scopeIsGpu = false;
+    const BUDGET_LABEL = '16.7 ms frame budget';
+
+    function fail(msg) {
+        $glCanvas.replaceWith(Object.assign(document.createElement('p'), {className: 'note', textContent: msg}));
+    }
+
+    function compile(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        return s;
+    }
+
+    function initGL() {
+        const vs = compile(gl.VERTEX_SHADER, `#version 300 es
+layout(location=0) in vec2 a_pos;
+layout(location=1) in float a_size;
+layout(location=2) in vec4 a_color;
+out vec4 v_color;
+void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); gl_PointSize = a_size; v_color = a_color; }`);
+        const fs = compile(gl.FRAGMENT_SHADER, `#version 300 es
+precision mediump float;
+in vec4 v_color;
+out vec4 outColor;
+void main(){ vec2 c = gl_PointCoord * 2.0 - 1.0; if (dot(c, c) > 1.0) discard; outColor = v_color; }`);
+        const prog = gl.createProgram();
+        gl.attachShader(prog, vs);
+        gl.attachShader(prog, fs);
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+        gl.useProgram(prog);
+
+        // fill the whole field once: static starfield in phosphor green, animated block in amber
+        for (let i = 0; i < CAP; i++) {
+            const o = i * STRIDE;
+            const x = Math.random() * 1.9 - 0.95;
+            const y = Math.random() * 1.9 - 0.95;
+            data[o] = x;
+            data[o + 1] = y;
+            data[o + 2] = 2.5;
+            if (i < ANIM) {
+                baseX[i] = x;
+                baseY[i] = y;
+                data[o + 3] = 0.94;
+                data[o + 4] = 0.63;
+                data[o + 5] = 0.13;
+                data[o + 6] = 1.0;   // amber
+            } else {
+                data[o + 3] = 0.09;
+                data[o + 4] = 0.6 + Math.random() * 0.4;
+                data[o + 5] = 0.4;
+                data[o + 6] = 1.0;   // phosphor
+            }
+        }
+
+        const vbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        const bpf = STRIDE * 4;
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, bpf, 0);
+        gl.enableVertexAttribArray(1);
+        gl.vertexAttribPointer(1, 1, gl.FLOAT, false, bpf, 8);
+        gl.enableVertexAttribArray(2);
+        gl.vertexAttribPointer(2, 4, gl.FLOAT, false, bpf, 12);
+
+        // the sink: mirrors lite-gl GLBackend createPointSink's interface exactly, and this is
+        // the seam the profiler hooks -- upload's floatCount and draw's count feed the counters.
+        sink = {
+            upload(offsetFloats, floatCount) {
+                gl.bufferSubData(gl.ARRAY_BUFFER, offsetFloats * 4, data, offsetFloats, floatCount);   // 6-arg form: no subarray alloc
+                profiler.recordUpload(floatCount);
+            },
+            draw(n) {
+                timerPool.begin();
+                gl.drawArrays(gl.POINTS, 0, n);
+                profiler.recordDraw(n);
+                timerPool.end();
+            }
+        };
+
+        timerPool = new GpuTimerPool(gl, {
+            onSample: (ms) => {
+                profiler.recordGpuTime(ms);
+                lastGpuSampleTs = performance.now();
+            }
+        });
+    }
+
+    function resize(canvas) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const w = Math.round(canvas.clientWidth * dpr);
+        const h = Math.round(canvas.clientHeight * dpr);
+        if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+            scopeFont = `600 ${Math.round(10 * dpr)}px ui-monospace, monospace`;
+            return true;
+        }
+        return false;
+    }
+
+    /* ---- render loop (zero allocation on the hot path) ---- */
+    function frame(ts) {
+        frameCount++;
+        if (resize($glCanvas)) gl.viewport(0, 0, $glCanvas.width, $glCanvas.height);
+
+        profiler.beginFrame();
+
+        // animate the contiguous block (indices 0..ANIM) -- this is the only data that changes
+        const t = ts * 0.001;
+        for (let i = 0; i < ANIM; i++) {
+            const o = i * STRIDE;
+            data[o] = baseX[i] + 0.06 * Math.sin(t * 1.3 + i * 0.11);
+            data[o + 1] = baseY[i] + 0.06 * Math.cos(t * 1.7 + i * 0.07);
+        }
+
+        // NUDGE uploads only the dirty block; REBUILD re-uploads the whole buffer (same pixels, huge counter).
+        if (mode === 'nudge') sink.upload(0, ANIM * STRIDE);
+        else sink.upload(0, count * STRIDE);
+
+        gl.clearColor(0.008, 0.024, 0.039, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        sink.draw(count);
+
+        profiler.endFrame();
+
+        // CPU frame time (fallback trace + fps for the bandwidth row) -- bitmask ring, no alloc
+        if (lastFrameTs !== 0) {
+            cpuRing[cpuHead] = ts - lastFrameTs;
+            cpuHead = (cpuHead + 1) & CPU_MASK;
+            if (cpuCount < CPU_N) cpuCount++;
+        }
+        lastFrameTs = ts;
+
+        if (activeScene === 'scope') drawScope();
+        if ((frameCount & TELEMETRY_MASK) === 0) updateTelemetry();
+
+        requestAnimationFrame(frame);
+    }
+
+    /* ---- oscilloscope trace ---- */
+    const GRID_STEP = 28;
+
+    function drawScope() {
+        resize($scopeCanvas);
+        const W = $scopeCanvas.width, H = $scopeCanvas.height;
+        if (W === 0 || H === 0) return;
+        scopeCtx.clearRect(0, 0, W, H);
+        scopeCtx.strokeStyle = 'rgba(23, 201, 138, 0.12)';
+        scopeCtx.lineWidth = 1;
+        scopeCtx.beginPath();
+        for (let x = 0; x < W; x += GRID_STEP) {
+            scopeCtx.moveTo(x, 0);
+            scopeCtx.lineTo(x, H);
+        }
+        for (let y = 0; y < H; y += GRID_STEP) {
+            scopeCtx.moveTo(0, y);
+            scopeCtx.lineTo(W, y);
+        }
+        scopeCtx.stroke();
+
+        const supported = timerPool && timerPool.supported;
+        const ring = profiler.gpuMsRing;
+        // GPU trace only while samples are actually flowing; a stalled or sparse
+        // timer hands the scope to the (always live) CPU fallback instead of
+        // freezing a handful of stale points on screen.
+        const gpuFresh = lastGpuSampleTs !== 0 && (performance.now() - lastGpuSampleTs) < GPU_STALE_MS;
+        const useGpu = supported && gpuFresh && ring.count > 1;
+        scopeIsGpu = useGpu;
+        let n, scaleMax;
+        if (useGpu) {
+            n = ring.copyTo(gpuCopy, 0);                        // oldest-first, <= 256, one memcpy
+            scaleMax = 8;
+        } else {
+            n = cpuCount;
+            for (let i = 0; i < n; i++) gpuCopy[i] = cpuRing[(cpuHead - n + i + CPU_N) & CPU_MASK];   // oldest -> newest
+            scaleMax = 24;
+        }
+        // auto-scale to the observed peak (no alloc)
+        let peak = 0;
+        for (let i = 0; i < n; i++) {
+            const v = gpuCopy[i];
+            if (v > peak) peak = v;
+        }
+        if (peak > scaleMax) scaleMax = peak * 1.15;
+        if (scaleMax < 2) scaleMax = 2;
+        scaleMaxLive = scaleMax;
+
+        // 60fps frame-budget marker, when it fits on scale
+        if (BUDGET_MS <= scaleMax) {
+            const yB = H - (BUDGET_MS / scaleMax) * (H - 6) - 3;
+            scopeCtx.strokeStyle = RED;
+            scopeCtx.setLineDash(DASH_BUDGET);
+            scopeCtx.beginPath();
+            scopeCtx.moveTo(0, yB);
+            scopeCtx.lineTo(W, yB);
+            scopeCtx.stroke();
+            scopeCtx.setLineDash(NODASH);
+            scopeCtx.fillStyle = RED;
+            scopeCtx.font = scopeFont;
+            scopeCtx.textAlign = 'left';
+            scopeCtx.fillText(BUDGET_LABEL, 8, yB - 5);
+        }
+
+        // p99 marker (GPU trace only; the panel's p99 is a GPU-time statistic)
+        if (useGpu && scopeP99 > 0 && scopeP99 <= scaleMax) {
+            const yP = H - (scopeP99 / scaleMax) * (H - 6) - 3;
+            scopeCtx.strokeStyle = AMBER;
+            scopeCtx.setLineDash(DASH_P99);
+            scopeCtx.beginPath();
+            scopeCtx.moveTo(0, yP);
+            scopeCtx.lineTo(W, yP);
+            scopeCtx.stroke();
+            scopeCtx.setLineDash(NODASH);
+            scopeCtx.fillStyle = AMBER;
+            scopeCtx.font = scopeFont;
+            scopeCtx.textAlign = 'right';
+            scopeCtx.fillText(p99Label, W - 8, yP - 5);
+        }
+
+        // the trace
+        if (n > 1) {
+            scopeCtx.strokeStyle = useGpu ? PHOS : AMBER;
+            scopeCtx.lineWidth = 1.5;
+            scopeCtx.beginPath();
+            for (let i = 0; i < n; i++) {
+                const v = gpuCopy[i];
+                const x = (i / (n - 1)) * W;
+                const y = H - (Math.min(v, scaleMax) / scaleMax) * (H - 6) - 3;
+                if (i === 0) scopeCtx.moveTo(x, y); else scopeCtx.lineTo(x, y);
+            }
+            scopeCtx.stroke();
+        }
+
+        // calibration + source labels (strings cached at ~7.5Hz; only fillText runs per frame)
+        scopeCtx.font = scopeFont;
+        scopeCtx.fillStyle = INK;
+        scopeCtx.textAlign = 'right';
+        if (msDivLabel !== '') scopeCtx.fillText(msDivLabel, W - 8, 16);
+        scopeCtx.textAlign = 'left';
+        scopeCtx.fillStyle = useGpu ? PHOS : AMBER;
+        if (sourceLabel !== '') scopeCtx.fillText(sourceLabel, 8, H - 8);
+    }
+
+    /* ---- telemetry (throttled ~7.5Hz; string building lives here, off the per-frame path) ---- */
+    function fmtBytes(bytes) {
+        if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+        if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+        return bytes + ' B';
+    }
+
+    function cpuFps() {
+        if (cpuCount < 8) return 0;
+        let sum = 0;
+        for (let i = 0; i < cpuCount; i++) sum += cpuRing[i];
+        const avg = sum / cpuCount;
+        return avg > 0 ? 1000 / avg : 0;
+    }
+
+    function updateTelemetry() {
+        const s = profiler.summary({label: mode});
+        const upLast = s.counters.floatsUploaded.last;
+        $cUpload.textContent = upLast.toLocaleString();
+        $cUpload.className = mode === 'rebuild' ? 'warn' : '';
+        $cDraws.textContent = s.counters.drawCalls.last;
+        $cInst.textContent = s.counters.instances.last.toLocaleString();
+        $cGpu.textContent = s.gpu.samples > 0 ? s.gpu.p99.toFixed(3) + ' ms' : 'n/a';
+
+        // uploaded floats -> bus traffic: the number that makes the waste visceral
+        const fps = cpuFps();
+        const bytesPerFrame = upLast * 4;
+        $cBand.textContent = fps > 0
+            ? fmtBytes(bytesPerFrame) + '/frame -> ' + fmtBytes(bytesPerFrame * fps) + '/s'
+            : fmtBytes(bytesPerFrame) + '/frame';
+        $cBand.className = mode === 'rebuild' ? 'warn' : '';
+
+        // refresh the scope's cached overlay strings
+        scopeP99 = s.gpu.samples > 0 ? s.gpu.p99 : 0;
+        msDivLabel = (scaleMaxLive / 4).toFixed(2) + ' ms/div (top ' + scaleMaxLive.toFixed(1) + ' ms)';
+        p99Label = 'p99 ' + scopeP99.toFixed(2) + ' ms';
+        sourceLabel = scopeIsGpu ? 'EXT_disjoint_timer_query_webgl2' : 'CPU frame time (fallback)';
+
+        if (activeScene === 'dirty') updateGate(s);
+        if (activeScene === 'scope') updateScopePanel(s);
+        if (activeScene === 'summary') updateSummary(s);
+    }
+
+    const RULES = {
+        'counter.floatsUploaded.max': {exact: true},
+        'counter.drawCalls.max': {exact: true},
+        'gpu.p99': {tolerance: P99_TOL}
+    };
+
+    function gateRow(label, ok, value) {
+        return `<div class="gaterow ${ok ? 'ok' : 'bad'}"><span class="k">${label}</span><span class="v">${value}</span></div>`;
+    }
+
+    function updateGate(s) {
+        if (!baseline) return;
+        const r = checkGpuRegression(baseline, s, RULES);
+        $verdict.className = 'verdict ' + (r.ok ? 'pass' : 'fail');
+        $verdictBig.textContent = r.ok ? 'PASS' : 'REGRESSED';
+
+        const bUp = baseline.counters.floatsUploaded.max, cUp = s.counters.floatsUploaded.max;
+        const bDr = baseline.counters.drawCalls.max, cDr = s.counters.drawCalls.max;
+        const upOk = bUp === cUp;
+        const drOk = bDr === cDr;
+        const gpuOk = !r.regressions.some((x) => x.metric === 'gpu.p99');
+        let rows = '';
+        rows += gateRow('floats uploaded (exact)', upOk, bUp.toLocaleString() + ' -> ' + cUp.toLocaleString());
+        rows += gateRow('draw calls (exact)', drOk, bDr + ' -> ' + cDr);
+        const bGpu = baseline.gpu.p99, cGpu = s.gpu.p99;
+        const pct = (bGpu > 0) ? ((cGpu - bGpu) / bGpu * 100) : 0;
+        rows += gateRow('GPU p99 (tol 15%)', gpuOk, bGpu > 0 && cGpu > 0 ? (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%' : 'n/a');
+        $gateRows.innerHTML = rows;
+
+        if (r.ok) {
+            $verdictSub.textContent = 'upload profile identical to baseline -- nothing changed';
+        } else if (upOk) {
+            $verdictSub.textContent = 'GPU time drifted beyond tolerance';
+        } else if (cUp > bUp) {
+            $verdictSub.textContent = 'full re-upload: ' + Math.round(cUp / Math.max(bUp, 1)) + 'x the uploaded floats, same pixels, same draw time';
+        } else {
+            $verdictSub.textContent = 'uploads DROPPED ' + Math.round(bUp / Math.max(cUp, 1)) + 'x below baseline -- exact gates flag any drift; recapture the baseline';
+        }
+    }
+
+    function updateScopePanel(s) {
+        const supported = timerPool && timerPool.supported;
+        $sSupported.textContent = supported ? 'yes' : 'no';
+        $sSupported.className = supported ? '' : 'warn';
+        $sAvg.textContent = s.gpu.samples > 0 ? s.gpu.avg.toFixed(3) + ' ms' : '--';
+        $sP99.textContent = s.gpu.samples > 0 ? s.gpu.p99.toFixed(3) + ' ms' : '--';
+        $sMax.textContent = s.gpu.samples > 0 ? s.gpu.max.toFixed(3) + ' ms' : '--';
+        $sSamples.textContent = s.gpu.samples;
+        $sFrames.textContent = s.frameCount;
+        $sSource.textContent = scopeIsGpu ? 'GPU timer' : 'CPU frame time (fallback)';
+        $sSource.className = scopeIsGpu ? '' : 'warn';
+        if (!supported && !scopeLedeFallbackSet) {
+            scopeLedeFallbackSet = true;
+            $scopeLede.innerHTML = '<b>GPU timer unavailable</b> on this browser/GPU (often disabled for privacy). Counters are unaffected; the trace falls back to CPU frame time.';
+        }
+    }
+
+    function updateSummary(s) {
+        const c = s.counters;
+        $summaryOut.textContent =
+            `schema        ${s.schema}
+label         ${s.label}
+frames        ${s.frameCount}   (drawn ${s.framesDrawn} / skipped ${s.framesSkipped})
+capacity      ${s.capacity}
+
+counters (per-frame)
+  floatsUploaded   sum ${c.floatsUploaded.sum.toLocaleString().padStart(14)}   max ${c.floatsUploaded.max.toLocaleString()}
+  drawCalls        sum ${String(c.drawCalls.sum).padStart(14)}   max ${c.drawCalls.max}
+  instances        sum ${c.instances.sum.toLocaleString().padStart(14)}   max ${c.instances.max.toLocaleString()}
+
+gpu time (ms)
+  samples ${s.gpu.samples} of ${s.frameCount} frames
+  avg ${s.gpu.avg.toFixed(3)}   p99 ${s.gpu.p99.toFixed(3)}   max ${s.gpu.max.toFixed(3)}
+
+gate (exact counters + tolerant timing)
+  counter.floatsUploaded.max : exact
+  counter.drawCalls.max      : exact
+  gpu.p99                    : tolerance 15%`;
+    }
+
+    /* ---- controls ---- */
+    $tabs.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-scene]');
+        if (!b) return;
+        activeScene = b.dataset.scene;
+        for (const btn of $tabs.querySelectorAll('button')) btn.setAttribute('aria-selected', String(btn === b));
+        for (const sc of $scenes) sc.classList.toggle('active', sc.dataset.scene === activeScene);
+    });
+
+    function pressSeg(container, attr, value) {
+        for (const btn of container.querySelectorAll('button')) btn.setAttribute('aria-pressed', String(btn.dataset[attr] === value));
+    }
+
+    // switching mode or point count starts a new measurement scenario: clear the sample
+    // window so max/avg never mix two scenarios (the baseline, if captured, is kept).
+    function resetWindow() {
+        profiler.reset();
+        cpuHead = 0;
+        cpuCount = 0;
+        lastFrameTs = 0;
+    }
+
+    $mode.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-mode]');
+        if (!b || b.dataset.mode === mode) return;
+        mode = b.dataset.mode;
+        pressSeg($mode, 'mode', mode);
+        resetWindow();
+    });
+
+    function setCount(v) {
+        if ((v | 0) === count) return;
+        count = v | 0;
+        pressSeg($count, 'count', String(count));
+        pressSeg($count2, 'count', String(count));
+        resetWindow();
+    }
+
+    $count.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-count]');
+        if (b) setCount(+b.dataset.count);
+    });
+    $count2.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-count]');
+        if (b) setCount(+b.dataset.count);
+    });
+
+    $capture.addEventListener('click', () => {
+        baseline = profiler.summary({label: 'baseline-' + mode});
+        $verdict.className = 'verdict pass';
+        $verdictBig.textContent = 'PASS';
+        $verdictSub.textContent = 'baseline captured in ' + mode.toUpperCase() + ' -- now flip the upload mode';
+    });
+    $clearBase.addEventListener('click', () => {
+        baseline = null;
+        $verdict.className = 'verdict idle';
+        $verdictBig.textContent = 'NO BASELINE';
+        $verdictSub.textContent = 'capture a baseline in NUDGE mode, then flip to REBUILD';
+        $gateRows.innerHTML = '';
+    });
+
+    /* ---- boot ---- */
+    // segmented controls reflect JS state at init (single source of truth; nothing hardcoded in HTML)
+    pressSeg($mode, 'mode', mode);
+    pressSeg($count, 'count', String(count));
+    pressSeg($count2, 'count', String(count));
+
+    if (!gl) {
+        fail('WebGL2 is required for this demo and is not available in this browser.');
+    } else {
+        try {
+            initGL();
+            requestAnimationFrame(frame);
+        } catch (err) {
+            fail('WebGL2 init failed: ' + err.message);
+        }
+    }
+</script>
+</body>
+</html>
