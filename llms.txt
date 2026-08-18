@@ -85,8 +85,16 @@ IS the frame boundary. Two seams:
 
 ## Gate
 
-    checkGpuRegression(baseline, candidate, rules?) -> { ok, regressions }
+    checkGpuRegression(baseline, candidate, rules?) -> { ok, verdict, regressions, inconclusive }
     assertNoGpuRegression(baseline, candidate, rules?)   // throws; err.report carries the result
+
+The gate is fail-closed and tri-state. verdict is 'pass' | 'fail' | 'inconclusive';
+ok === (verdict === 'pass'). A rule it cannot evaluate against real measurements --
+a gpu.* stat with gpu.samples === 0 (headless CI, no timer extension), a poisoned
+non-finite/null stat, or a counter tag tracked by neither summary -- routes to
+inconclusive, never a green pass. assertNoGpuRegression throws GpuRegressionError on
+'fail' and GpuInconclusiveError on 'inconclusive' (both carry .report). A misspelled
+rule path throws GpuRuleError ("valid paths are ...") before any evaluation.
 
 Rule kinds per metric path (`counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`):
   { exact: true }      -> regress if candidate != baseline   (deterministic counters)

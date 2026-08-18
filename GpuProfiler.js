@@ -120,7 +120,7 @@ export class GpuProfiler {
      * @param {number} ms
      */
     recordGpuTime(ms) {
-        if (ms >= 0) this.gpuMsRing.push(ms);
+        if (Number.isFinite(ms) && ms >= 0) this.gpuMsRing.push(ms);
     }
 
     /** End a frame: flush per-frame counter totals to their rings. */

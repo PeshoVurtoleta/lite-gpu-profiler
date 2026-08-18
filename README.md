@@ -8,7 +8,7 @@
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-gpu-profiler?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-gpu-profiler)
 [![lite-signal peer](https://img.shields.io/badge/peer-lite--signal-blue?style=for-the-badge)](https://github.com/PeshoVurtoleta/lite-signal)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE.txt)
-[![tests](https://img.shields.io/badge/tests-19_passing-3fb950)](#whats-tested)
+[![tests](https://img.shields.io/badge/tests-44_passing-3fb950)](#whats-tested)
 [![hot path](https://img.shields.io/badge/hot_path-zero_alloc-3fb950)](#the-hot-path)
 [![WebGL2](https://img.shields.io/badge/WebGL2-timer_query-8250df)](#gputimerpool--browser-timer)
 [![types](https://img.shields.io/badge/types-included-3178c6)](./index.d.ts)
@@ -192,10 +192,20 @@ counters slot into the same matrix.
 import { checkGpuRegression, assertNoGpuRegression, GPU_DEFAULT_RULES } from '@zakkster/lite-gpu-profiler';
 
 const report = checkGpuRegression(baseline, candidate /*, rules */);
-// report → { ok, regressions: [{ metric, baseline, candidate, rule, reason }] }
+// report -> { ok, verdict, regressions, inconclusive }
+//   verdict: 'pass' | 'fail' | 'inconclusive'   (ok === verdict === 'pass')
+//   regressions / inconclusive: [{ metric, baseline, candidate, rule, reason }]
 
 assertNoGpuRegression(baseline, candidate);   // throws; err.report carries the result
 ```
+
+The gate is **fail-closed**. A rule it cannot evaluate against a real measurement -- a
+`gpu.*` stat whose candidate has `gpu.samples === 0` (headless CI with no timer
+extension), a poisoned non-finite/null stat, or a counter tag neither summary tracks --
+routes to `inconclusive`, never a green pass. A misspelled rule path throws
+`GpuRuleError` before anything is evaluated. `assertNoGpuRegression` throws
+`GpuRegressionError` on a `fail` and `GpuInconclusiveError` on an `inconclusive`, so CI
+can tell "did not measure" from "regressed" from "clean".
 
 Rules are keyed by a metric path — `counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`:
 

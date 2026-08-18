@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-gpu-profiler",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Zero-GC WebGL2 render-path telemetry. Deterministic command counters (draw calls, instances, floats uploaded) recorded in the GL-agnostic core, plus an async EXT_disjoint_timer_query_webgl2 GPU-time pool. Passive instrument; pairs with lite-vram (the manager). Gates through the same matrix as lite-profiler.",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
   "license": "MIT",
@@ -71,5 +71,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@zakkster/lite-gc-profiler": "^1.15.1",
+    "@zakkster/lite-leak": "^1.8.1"
   }
 }
