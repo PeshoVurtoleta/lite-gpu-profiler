@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.1.0] - 2026-08-18
+
+Torture harness. No runtime behavior change -- `GpuProfiler`, `GpuTimerPool`, and
+`GpuGate` are byte-for-byte identical; this release adds evidence, not surface.
+
+- `test/torture.mjs` (`npm run torture` -> `node --expose-gc test/torture.mjs`)
+  proves the package through `@zakkster/lite-gc-profiler` and `@zakkster/lite-leak`,
+  as the ecosystem law requires. Tiers, run in order, each printing `ok <tier>`;
+  a tier reporting zero checks is a FAIL, and the first failure sets a non-zero
+  exit code:
+  - V0 -- every documented rule path (25: 15 counter + 6 gpu + 4 top-level) is
+    evaluated in both directions; a misspelled path throws `GpuRuleError` and
+    rejecting it leaves the valid-path verdict unchanged (fences GG-02).
+  - V1 -- fail-closed degenerates: `gpu.samples === 0`, non-finite/negative
+    `recordGpuTime`, empty and single-sample captures each route to `inconclusive`
+    or `fail`, never a silent `pass` (fences GG-01/GG-04). Pins GG-10 (the gate
+    does not read `summary.schema`; deferred, not fixed).
+  - V3a/V3b -- the profiler and pool hot paths are stepped 2e6 / 1e6 times under
+    `GcProfiler`; the zero-allocation claim is gated on `checkNoGc(maxMajor:0,
+    maxPauseMs:4)` (major-GC count), the noise-immune proof. A retaining hot-path
+    variant reliably forces a major and fails; the clean path forces none. V3b
+    also proves the pool never allocates after construction structurally: exactly
+    `poolSize` queries created, all deleted on dispose, with the disjoint-drop and
+    pool-exhausted branches exercised in the measured window.
+  - V3c -- retention: ring backing stores do not grow across 4096 `reset()` cycles
+    (`byteLength` identical at cycle 1 vs N) and tracked profilers are collected
+    (`tracker.size() -> 0`).
+  - V5 -- controls: three mutants (allocating hot path, legacy binary gate,
+    permissive validator), each spawned in a child that must exit non-zero, so
+    the gate is proven able to fail.
+- `scripts.torture` added. `test/` still excluded from the published tarball --
+  the harness does not ship.
+
 ## [1.0.1] - 2026-08-18
 
 Fail-closed gate fixes. The regression gate no longer returns a green pass on
