@@ -16,7 +16,8 @@
 //   V0  surface conformance -- every documented rule path is evaluated, a typo
 //       throws, and rejecting it leaves the valid-path verdict untouched.
 //   V1  fail-closed degenerates -- samples===0, non-finite recordGpuTime, empty
-//       and single-sample captures, schema mismatch (GG-10 pinned, not fixed).
+//       and single-sample captures, and a schema mismatch that routes to
+//       inconclusive (GG-10, fixed in 1.1.1; both directions pinned).
 //   V3a profiler hot path -- steady instance stepped HOT times under GcProfiler,
 //       gated on checkNoGc(maxMajor:0,maxPauseMs:4). A zero-alloc hot path forces
 //       no major GC; a retaining variant forces majors. (maxBytesPerOp:0 is NOT
@@ -29,10 +30,14 @@
 //       created, every one deleted on dispose, and both distinguishing branches
 //       (disjoint-drop, pool-exhausted) run inside the measured window.
 //   V3c retention -- backing stores never grow across reset() (byteLength identical
-//       at cycle 1 vs N); tracked profilers are collected (tracker.size() -> 0).
+//       at cycle 1 vs N); tracked profilers are collected (tracker.size() -> 0) via
+//       a bounded-retry settle (gc + macrotask, up to MAX_SETTLE_ROUNDS, early-exit
+//       the instant the tracker drains -- a real leak burns all rounds and FAILS).
 //       lite-leak OUTSIDE every measured window.
-//   V5  controls -- three mutants (allocating hot path, legacy binary gate,
-//       permissive validator) each spawned in a child that MUST exit non-zero.
+//   V5  controls -- four mutants (allocating hot path, legacy binary gate,
+//       permissive validator, retaining tracker) each spawned in a child that MUST
+//       exit non-zero. The retain mutant is the leak-direction control for the
+//       bounded settle: a genuine leak never drains and fails the tier.
 //
 // A tier reporting 0 checks is a FAIL. No gate output is a FAIL.
 //
@@ -69,7 +74,13 @@ const CHILD = MUTANT !== '';
 const HOT_A = 2000000;                     // V3a profiler hot-path steps
 const HOT_B = 1000000;                     // V3b pool begin/end steps
 const CYCLES = CHILD ? 512 : 4096;         // V3c fill/reset stability cycles
-const RETAIN_N = CHILD ? 256 : 1024;       // V3c/V3b FR-collection cycles
+// V3c/V3b FR-collection cycles. Child scale is 512, not 256: at 256 a single one
+// of the clean pool/profiler objects can straggle uncollected for tens of settle
+// rounds (a GC-timing artifact, not a leak), which would fail V3b/V3c for the
+// WRONG reason before the retain control ever reaches its V3c injection. At 512 the
+// clean set drains in round 1 every time, so a child that fails did so for a real
+// reason -- the injected _retainSink leak.
+const RETAIN_N = CHILD ? 512 : 1024;
 
 const COUNTER_TAGS = ['drawCalls', 'instances', 'floatsUploaded'];
 
@@ -81,6 +92,10 @@ const gateV0 = MUTANT === 'validator' ? permissiveValidatorGate
         : checkGpuRegression;
 const gateV1 = MUTANT === 'gate' ? legacyBinaryGate : checkGpuRegression;
 const allocMutant = MUTANT === 'alloc';
+// Leak-direction control for the bounded settle (GG-11): retain every tracked
+// profiler so the tracker never drains, exhausting all settle rounds and failing V3c.
+const retainMutant = MUTANT === 'retain';
+const _retainSink = [];
 
 // ---------------------------------------------------------------------------
 // Mutant gates (harness alternatives; never touch runtime source).
@@ -269,13 +284,32 @@ async function tierV1() {
         GpuRegressionError, 'V1 single-sample asserts GpuRegressionError');
     ok(!!eReg.report, 'V1 regression error carries .report');
 
-    // (5) GG-10 (RECORD, DO NOT FIX): GpuGate never reads summary.schema, so a
-    // schema-mismatched baseline is NOT detected -- it evaluates as if it
-    // matched. Pin the ACTUAL behavior here; the fix is deferred to GPU3.
+    // (5) GG-10 (fixed in 1.1.1): GpuGate reads summary.schema. Two summaries whose
+    // schema tokens differ are incomparable, so the gate short-circuits to
+    // inconclusive before any rule runs -- one 'schema' entry, no regressions. Both
+    // directions are pinned: the mismatched pair routes away from pass, and the
+    // matched control still passes (the pre-pass did not break the comparable case).
     const wrongSchema = baseSummary();
     wrongSchema.schema = 'lite-gpu-profiler/summary@999';
-    const rSchema = checkGpuRegression(wrongSchema, baseSummary(), { 'counter.drawCalls.max': { exact: true } });
-    ok(rSchema.verdict === 'pass', 'V1 GG-10: schema mismatch undetected (evaluates as pass), got ' + rSchema.verdict);
+    const schemaRules = { 'counter.drawCalls.max': { exact: true } };
+
+    // mutant-sensitive: legacyBinaryGate collapses inconclusive to pass, so this
+    // trips the 'gate' mutant on the NEW route as well as the old ones.
+    ok(gateV1(wrongSchema, baseSummary(), schemaRules).verdict !== 'pass',
+        'V1 GG-10: schema mismatch must not pass');
+
+    const rSchema = checkGpuRegression(wrongSchema, baseSummary(), schemaRules);
+    ok(rSchema.verdict === 'inconclusive', 'V1 GG-10 schema mismatch verdict=' + rSchema.verdict);
+    ok(rSchema.inconclusive.length === 1, 'V1 GG-10 one inconclusive entry, got ' + rSchema.inconclusive.length);
+    ok(rSchema.inconclusive[0].rule === 'schema', 'V1 GG-10 entry rule=' + rSchema.inconclusive[0].rule);
+    ok(rSchema.regressions.length === 0, 'V1 GG-10 no regressions, got ' + rSchema.regressions.length);
+    const eSchema = throws(() => assertNoGpuRegression(wrongSchema, baseSummary(), schemaRules),
+        GpuInconclusiveError, 'V1 GG-10 asserts GpuInconclusiveError');
+    ok(!!eSchema.report, 'V1 GG-10 inconclusive error carries .report');
+
+    // matched direction (the control): the pre-pass leaves comparable pairs alone.
+    ok(checkGpuRegression(baseSummary(), baseSummary(), schemaRules).verdict === 'pass',
+        'V1 GG-10 matched schema pair still passes');
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +423,19 @@ function poolOp(i) {
     _pool.end();
 }
 
+// Fill the tracker with RETAIN_N dropped pools. A standalone function so its loop
+// locals (gl/pool) are dead the instant it returns -- the awaiting tierV3b frame
+// must hold no reference to any tracked pool, or the last one straggles.
+function fillPoolTracker(tracker) {
+    for (let k = 0; k < RETAIN_N; k++) {
+        const gl = makeSteadyGL(POOL_SIZE, 2);
+        const pool = new GpuTimerPool(gl, { poolSize: POOL_SIZE, onSample: _noop });
+        for (let f = 0; f < 16; f++) { gl._tick(); pool.begin(); pool.end(); }
+        pool.dispose();
+        tracker.track(pool, _noop, 'gpu-timer-pool');
+    }
+}
+
 async function tierV3b() {
     _poolGL = makeSteadyGL(POOL_SIZE, POOL_LAG);
     _pool = new GpuTimerPool(_poolGL, { poolSize: POOL_SIZE, onSample: _noop });
@@ -424,22 +471,39 @@ async function tierV3b() {
 
     // Retention proof by INSTRUMENT: create/dispose/drop short-lived pools with
     // no owner; a collected pool reaches the FR path and size() returns to 0.
-    // (OUTSIDE the measure window.)
+    // (OUTSIDE the measure window.) The fill runs in a helper that RETURNS before
+    // the settle so no pool/gl binding lingers in the awaiting frame -- otherwise
+    // the last-created object stays reachable and straggles for tens of rounds.
     const tracker = createLeakTracker({ name: 'pool-torture', onLeak: _noop });
-    for (let k = 0; k < RETAIN_N; k++) {
-        const gl = makeSteadyGL(POOL_SIZE, 2);
-        const pool = new GpuTimerPool(gl, { poolSize: POOL_SIZE, onSample: _noop });
-        for (let f = 0; f < 16; f++) { gl._tick(); pool.begin(); pool.end(); }
-        pool.dispose();
-        tracker.track(pool, _noop, 'gpu-timer-pool');
-    }
-    await settle();
-    ok(tracker.size() === 0, 'V3b tracked pools not collected, size=' + tracker.size());
+    fillPoolTracker(tracker);
+    const rounds = await settleTracker(tracker);
+    ok(tracker.size() === 0, 'V3b tracked pools not collected, size=' + tracker.size() +
+        ' after ' + MAX_SETTLE_ROUNDS + ' settle rounds (drained in ' + rounds + ')');
 }
 
 // ---------------------------------------------------------------------------
 // Tier V3c -- profiler retention (A2). lite-leak OUTSIDE every measure window.
 // ---------------------------------------------------------------------------
+// Fill the tracker with RETAIN_N dropped profilers. Standalone so its loop local
+// (p) is dead the instant it returns. The retain mutant additionally pushes every
+// profiler into _retainSink (a module-level hard ref), so that child's tracker
+// never drains -- the leak-direction control for the bounded settle.
+function fillProfilerTracker(tracker) {
+    for (let k = 0; k < RETAIN_N; k++) {
+        const p = new GpuProfiler(64, { counters: COUNTER_TAGS });
+        for (let f = 0; f < 96; f++) {
+            p.beginFrame();
+            p.recordDraw(1);
+            p.recordUpload(8);
+            p.recordGpuTime((f & 7) + 1);
+            p.endFrame();
+        }
+        p.reset();
+        if (retainMutant) _retainSink.push(p);
+        tracker.track(p, _noop, 'gpu-profiler');
+    }
+}
+
 async function tierV3c() {
     // Backing-store stability: one profiler, filled to capacity then reset()
     // for CYCLES rounds. reset() must never reallocate a ring.
@@ -469,22 +533,15 @@ async function tierV3c() {
     sp.destroy();
 
     // Retention by instrument: fill/reset/drop fresh profilers with no owner;
-    // every one must be collected (tracker.size() -> 0).
-    const tracker = createLeakTracker({ name: 'gpu-torture', onLeak: () => { } });
-    for (let k = 0; k < RETAIN_N; k++) {
-        const p = new GpuProfiler(64, { counters: COUNTER_TAGS });
-        for (let f = 0; f < 96; f++) {
-            p.beginFrame();
-            p.recordDraw(1);
-            p.recordUpload(8);
-            p.recordGpuTime((f & 7) + 1);
-            p.endFrame();
-        }
-        p.reset();
-        tracker.track(p, () => { }, 'gpu-profiler');
-    }
-    await settle();
-    ok(tracker.size() === 0, 'V3c tracked profilers not collected, size=' + tracker.size());
+    // every one must be collected (tracker.size() -> 0). The fill runs in a helper
+    // that RETURNS before the settle so no profiler binding lingers in the awaiting
+    // frame. The retain mutant hard-holds every profiler in _retainSink, so the
+    // tracker never drains and V3c fails for a REAL leak (the settle's control).
+    const tracker = createLeakTracker({ name: 'gpu-torture', onLeak: _noop });
+    fillProfilerTracker(tracker);
+    const rounds = await settleTracker(tracker);
+    ok(tracker.size() === 0, 'V3c tracked profilers not collected, size=' + tracker.size() +
+        ' after ' + MAX_SETTLE_ROUNDS + ' settle rounds (drained in ' + rounds + ')');
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +549,7 @@ async function tierV3c() {
 // non-zero. Injection is env + spawnSync, never an in-process patch.
 // ---------------------------------------------------------------------------
 async function tierV5() {
-    for (const name of ['alloc', 'gate', 'validator']) {
+    for (const name of ['alloc', 'gate', 'validator', 'retain']) {
         const res = spawnSync(process.execPath, ['--expose-gc', fileURLToPath(import.meta.url)], {
             env: Object.assign({}, process.env, { TORTURE_MUTANT: name }),
             encoding: 'utf8'
@@ -514,14 +571,25 @@ async function flush() {
 }
 
 // ---------------------------------------------------------------------------
-// gc + macrotask settle: FinalizationRegistry callbacks fire only after a
-// collection AND a macrotask, so drive both, twice, to drain stragglers.
+// gc + macrotask settle, bounded and early-exiting (GG-11). FinalizationRegistry
+// callbacks fire only after a collection AND a macrotask, so drive both, retried
+// up to MAX_SETTLE_ROUNDS, exiting the instant the tracker drains. Bounded by
+// construction: a genuine leak never drains, so it costs all rounds and then fails
+// the tier -- the widened window can never mask a leak. Never inside a measured
+// GC window. Returns the round count on drain, or -1 if it never drained. The cap
+// sits well above the worst observed clean-drain latency (round 1, once the fill
+// loops run in helpers so no tracked object outlives its frame), so headroom
+// absorbs a rare straggler while a real hard-referenced leak still exhausts it.
 // ---------------------------------------------------------------------------
-async function settle() {
-    for (let i = 0; i < 2; i++) {
+const MAX_SETTLE_ROUNDS = 8;
+
+async function settleTracker(tracker) {
+    for (let i = 0; i < MAX_SETTLE_ROUNDS; i++) {
         globalThis.gc && globalThis.gc();
         await new Promise((r) => setTimeout(r, 60));
+        if (tracker.size() === 0) return i + 1;
     }
+    return -1;
 }
 
 // ---------------------------------------------------------------------------

@@ -85,16 +85,27 @@ IS the frame boundary. Two seams:
 
 ## Gate
 
-    checkGpuRegression(baseline, candidate, rules?) -> { ok, verdict, regressions, inconclusive }
+    checkGpuRegression(baseline, candidate, rules?) -> { ok, verdict, regressions, inconclusive, warnings }
     assertNoGpuRegression(baseline, candidate, rules?)   // throws; err.report carries the result
 
 The gate is fail-closed and tri-state. verdict is 'pass' | 'fail' | 'inconclusive';
 ok === (verdict === 'pass'). A rule it cannot evaluate against real measurements --
 a gpu.* stat with gpu.samples === 0 (headless CI, no timer extension), a poisoned
 non-finite/null stat, or a counter tag tracked by neither summary -- routes to
-inconclusive, never a green pass. assertNoGpuRegression throws GpuRegressionError on
-'fail' and GpuInconclusiveError on 'inconclusive' (both carry .report). A misspelled
-rule path throws GpuRuleError ("valid paths are ...") before any evaluation.
+inconclusive, never a green pass. Two summaries whose `schema` tokens differ are
+incomparable and short-circuit to inconclusive before any rule runs (undefined vs
+undefined is NOT a mismatch: two hand-rolled summaries from the same producer).
+assertNoGpuRegression throws GpuRegressionError on 'fail' and GpuInconclusiveError on
+'inconclusive' (both carry .report). A misspelled rule path throws GpuRuleError
+("valid paths are ...") before any evaluation.
+
+The report also carries a `warnings` array (always present, never affects
+verdict/ok): an `exact` rule whose operands reach 2^24 is flagged, because the
+Float32 counter ring quantizes there and a sub-quantum regression is invisible.
+
+The error classes are NOT exported from the package entry point, so CI branches on
+`err.name === 'GpuRegressionError'` / `'GpuInconclusiveError'` and on
+`err.report.verdict`, not on `instanceof`.
 
 Rule kinds per metric path (`counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`):
   { exact: true }      -> regress if candidate != baseline   (deterministic counters)
@@ -109,8 +120,9 @@ and counter.drawCalls.max (draw-call count) exactly, gpu.p99 within 15%.
 - Core counters + gate: node:test, headless, deterministic (see test/).
 - Timer-pool state machine (cycling, lag, FIFO order, disjoint-drop, pool reuse =
   zero per-frame alloc, no leaked handles): node:test against a mock gl.
-- Actual GPU nanoseconds: a Playwright smoke test against a real GPU (browser only;
-  no WebGL2 under node) -- ships separately, same posture as lite-gl's sink coverage.
+- Actual GPU nanoseconds: driver-reported via TIME_ELAPSED_EXT and NOT verified in
+  this package (no WebGL2 under node). What is verified is the state machine and the
+  ns->ms conversion, against a mock gl.
 
 ## Scope (v1)
 

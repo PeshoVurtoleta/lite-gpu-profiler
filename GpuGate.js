@@ -33,6 +33,10 @@ export const COUNTER_FIELDS = ['sum', 'min', 'max', 'avg', 'last'];
 /** Single-segment top-level fields a rule may name. */
 export const TOP_FIELDS = ['frameCount', 'capacity', 'framesDrawn', 'framesSkipped'];
 
+// Float32 counter rings are exact up to 2^24; above it the quantum exceeds 1, so
+// an exact comparison cannot see a sub-quantum regression. Signal, do not fail.
+const EXACT_PRECISION_CEILING = 16777216;   // 2^24
+
 /** Thrown when a rule path does not name a known metric surface. */
 export class GpuRuleError extends Error {
     constructor(message) { super(message); this.name = 'GpuRuleError'; }
@@ -93,7 +97,8 @@ function validateRulePath(path) {
  * @param {Object<string, {exact?:boolean, max?:number, tolerance?:number}>} [rules]
  * @returns {{ ok: boolean, verdict: 'pass'|'fail'|'inconclusive',
  *            regressions: Array<{metric,baseline,candidate,rule,reason}>,
- *            inconclusive: Array<{metric,baseline,candidate,rule,reason}> }}
+ *            inconclusive: Array<{metric,baseline,candidate,rule,reason}>,
+ *            warnings: Array<{metric,baseline,candidate,rule,reason}> }}
  */
 export function checkGpuRegression(baseline, candidate, rules = GPU_DEFAULT_RULES) {
     // Pre-pass: validate EVERY rule path AND rule shape before any evaluation, so a
@@ -107,8 +112,28 @@ export function checkGpuRegression(baseline, candidate, rules = GPU_DEFAULT_RULE
         }
     }
 
+    // Schema pre-pass (GG-10): two summaries whose schema tokens differ are not
+    // mutually comparable -- comparing their fields is comparing values that are
+    // not defined to mean the same thing. Short-circuit to inconclusive before any
+    // rule runs; one fact, one entry. undefined-vs-undefined is NOT a mismatch (two
+    // hand-rolled summaries from the same producer), so they evaluate normally.
+    const bSchema = baseline && baseline.schema;
+    const cSchema = candidate && candidate.schema;
+    if (bSchema !== cSchema) {
+        const entry = {
+            metric: 'schema',
+            baseline: bSchema,
+            candidate: cSchema,
+            rule: 'schema',
+            reason: 'summary schema mismatch (incomparable summaries): baseline "'
+                  + bSchema + '" vs candidate "' + cSchema + '"'
+        };
+        return { ok: false, verdict: 'inconclusive', regressions: [], inconclusive: [entry], warnings: [] };
+    }
+
     const regressions = [];
     const inconclusive = [];
+    const warnings = [];
     for (const path in rules) {
         const rule = rules[path];
         const p = path.split('.');
@@ -144,6 +169,17 @@ export function checkGpuRegression(baseline, candidate, rules = GPU_DEFAULT_RULE
         }
 
         if (rule.exact) {
+            // GG-03: above 2^24 the Float32 counter ring's quantum exceeds 1, so an
+            // exact gate is blind to a sub-quantum regression. The comparison is still
+            // correctly measured (equal-vs-equal stays valid); emit a precision
+            // advisory that never affects verdict/ok, whether the compare passes or fails.
+            if ((typeof base === 'number' && base >= EXACT_PRECISION_CEILING) ||
+                (typeof cand === 'number' && cand >= EXACT_PRECISION_CEILING)) {
+                warnings.push({
+                    metric: path, baseline: base, candidate: cand, rule: 'exact',
+                    reason: 'operand >= 2^24: Float32 counter ring quantizes here, so a regression smaller than the quantum is undetectable by an exact gate'
+                });
+            }
             // An exact rule guards a specific metric. If the baseline tracked it and the
             // candidate no longer reports it, the metric VANISHED -- that is a regression,
             // not a silent pass. (Baseline also lacks it -> no basis -> skip.)
@@ -172,7 +208,7 @@ export function checkGpuRegression(baseline, candidate, rules = GPU_DEFAULT_RULE
         }
     }
     const verdict = regressions.length ? 'fail' : inconclusive.length ? 'inconclusive' : 'pass';
-    return { ok: verdict === 'pass', verdict, regressions, inconclusive };
+    return { ok: verdict === 'pass', verdict, regressions, inconclusive, warnings };
 }
 
 /**

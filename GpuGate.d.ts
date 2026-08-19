@@ -3,9 +3,9 @@ import type { GpuSummary } from './GpuProfiler.js';
 export interface GpuRule { exact?: boolean; max?: number; tolerance?: number; }
 export interface GpuRegression {
     metric: string;
-    baseline: number | null | undefined;
-    candidate: number | null | undefined;
-    rule: 'exact' | 'max' | 'tolerance' | 'unknown';
+    baseline: number | string | null | undefined;
+    candidate: number | string | null | undefined;
+    rule: 'exact' | 'max' | 'tolerance' | 'schema' | 'unknown';
     reason: string;
 }
 export type GpuVerdict = 'pass' | 'fail' | 'inconclusive';
@@ -14,6 +14,7 @@ export interface GpuGateResult {
     verdict: GpuVerdict;
     regressions: GpuRegression[];
     inconclusive: GpuRegression[];
+    warnings: GpuRegression[];
 }
 
 export const GPU_DEFAULT_RULES: Record<string, GpuRule>;

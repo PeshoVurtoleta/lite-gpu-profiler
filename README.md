@@ -8,7 +8,7 @@
 [![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-gpu-profiler?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-gpu-profiler)
 [![lite-signal peer](https://img.shields.io/badge/peer-lite--signal-blue?style=for-the-badge)](https://github.com/PeshoVurtoleta/lite-signal)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE.txt)
-[![tests](https://img.shields.io/badge/tests-44_passing-3fb950)](#whats-tested)
+[![tests](https://img.shields.io/badge/tests-56_passing-3fb950)](#whats-tested)
 [![hot path](https://img.shields.io/badge/hot_path-zero_alloc-3fb950)](#the-hot-path)
 [![WebGL2](https://img.shields.io/badge/WebGL2-timer_query-8250df)](#gputimerpool--browser-timer)
 [![types](https://img.shields.io/badge/types-included-3178c6)](./index.d.ts)
@@ -181,7 +181,9 @@ gpu.summary({ label: 'my-scene' })
 
 Counter rings are `Float32`-backed, so per-frame counter **values** are exact up to
 2²⁴ (16,777,216) — e.g. 2M instances × 8 floats. Beyond that they quantize *deterministically*:
-identical runs still gate equal; only the printed value rounds.
+identical runs still gate equal; only the printed value rounds. An `exact` gate rule
+whose operands reach this ceiling is surfaced in the report's `warnings` array (see the
+regression gate below), because a sub-quantum regression there is undetectable.
 
 ## Regression gate
 
@@ -192,9 +194,9 @@ counters slot into the same matrix.
 import { checkGpuRegression, assertNoGpuRegression, GPU_DEFAULT_RULES } from '@zakkster/lite-gpu-profiler';
 
 const report = checkGpuRegression(baseline, candidate /*, rules */);
-// report -> { ok, verdict, regressions, inconclusive }
+// report -> { ok, verdict, regressions, inconclusive, warnings }
 //   verdict: 'pass' | 'fail' | 'inconclusive'   (ok === verdict === 'pass')
-//   regressions / inconclusive: [{ metric, baseline, candidate, rule, reason }]
+//   regressions / inconclusive / warnings: [{ metric, baseline, candidate, rule, reason }]
 
 assertNoGpuRegression(baseline, candidate);   // throws; err.report carries the result
 ```
@@ -202,10 +204,19 @@ assertNoGpuRegression(baseline, candidate);   // throws; err.report carries the 
 The gate is **fail-closed**. A rule it cannot evaluate against a real measurement -- a
 `gpu.*` stat whose candidate has `gpu.samples === 0` (headless CI with no timer
 extension), a poisoned non-finite/null stat, or a counter tag neither summary tracks --
-routes to `inconclusive`, never a green pass. A misspelled rule path throws
+routes to `inconclusive`, never a green pass. Two summaries whose `schema` tokens differ
+are incomparable and short-circuit to `inconclusive` before any rule runs (two
+un-stamped summaries are treated as comparable). A misspelled rule path throws
 `GpuRuleError` before anything is evaluated. `assertNoGpuRegression` throws
 `GpuRegressionError` on a `fail` and `GpuInconclusiveError` on an `inconclusive`, so CI
-can tell "did not measure" from "regressed" from "clean".
+can tell "did not measure" from "regressed" from "clean". Those error classes are not
+exported from the package entry point, so branch CI on `err.name === 'GpuRegressionError'`
+/ `'GpuInconclusiveError'` and on `err.report.verdict`, not on `instanceof`.
+
+The report also carries a `warnings` array (always present, never affecting
+`verdict`/`ok`): an `exact` rule whose operands reach 2^24 is flagged, because the
+`Float32` counter ring quantizes there and a regression smaller than the quantum is
+invisible to an exact gate -- see the counter-precision note above.
 
 Rules are keyed by a metric path — `counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`:
 
@@ -250,7 +261,7 @@ frame boundary. Two seams:
 | --- | --- |
 | Core counters + gate | `node:test`, headless, deterministic |
 | Timer-pool state machine | `node:test` against a mock GL — cycling, resolution lag, FIFO order, disjoint-drop, pool reuse (zero per-frame alloc), no leaked handles |
-| Actual GPU nanoseconds | Playwright smoke test on a real GPU (no WebGL2 under node) — ships separately, the same posture as lite-gl's sink coverage |
+| Actual GPU nanoseconds | not verified here -- driver-reported via `EXT_disjoint_timer_query_webgl2`; no WebGL2 under node. The ns->ms conversion and FIFO ordering are covered by the mock-GL suite |
 
 ```bash
 npm test        # node --test (headless)

@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.1.1] - 2026-08-19
+
+Fail-closed correctness + doc hygiene. No new caller-visible exception, no new
+module export, and the hot path (`recordDraw`/`recordUpload`/`add`/`recordGpuTime`)
+is byte-identical -- so this is a patch. `GPU_SUMMARY_SCHEMA` stays
+`lite-gpu-profiler/summary@1` (bumping it while beginning to enforce token equality
+would invalidate every baseline from 1.0.x/1.1.0); no field is added to `summary()`.
+
+- **GG-05 -- frame contract, as a no-op (not a throw).** `beginFrame()`/`endFrame()`
+  each gain one boolean guard on the existing `_frameOpen` field: an unpaired call
+  records nothing. A stray `endFrame()` no longer fabricates a zeroed phantom frame,
+  a redundant `beginFrame()` preserves the accumulation in flight instead of
+  discarding every draw since the last one, and a `reset()` mid-frame correctly drops
+  the in-flight frame. The instrument never throws from the render loop; the gate
+  already routes a malformed capture (`frameCount: 0`) to `inconclusive`/`fail`. Two
+  predictable branches per frame, zero per draw, zero allocation added.
+- **GG-10 -- the gate reads `summary.schema`.** Two summaries whose `schema` tokens
+  differ are incomparable and short-circuit to `inconclusive` before any rule runs
+  (one `schema` entry, no regressions), reusing the existing tri-state and
+  `GpuInconclusiveError`. `undefined` vs `undefined` is deliberately treated as
+  comparable. This is the one verdict flip in the release (`pass` -> `inconclusive`
+  on a mismatched pair); re-record the baseline to clear it.
+- **GG-03 -- a `warnings` array on the report.** `checkGpuRegression` now returns
+  `{ ok, verdict, regressions, inconclusive, warnings }` (`warnings` always present,
+  never affecting `verdict`/`ok`). An `exact` rule whose operand reaches 2^24 is
+  flagged: the `Float32` counter ring quantizes there, so a sub-quantum regression is
+  invisible to an exact gate. Below the ceiling is byte-for-byte unchanged.
+- **GG-08 -- doc correction.** The phantom external real-GPU smoke-test reference is
+  removed from `GpuTimerPool.js`, `llms.txt`, and `README.md`. What actually verifies
+  the timer is the mock-GL state-machine suite in
+  `test/03-timer-pool.test.mjs`; absolute nanoseconds are driver-reported and not
+  asserted here (no WebGL2 under node). No browser-automation dependency is added.
+- **GG-12 (docs-only) -- reachability note.** The gate error classes and field arrays
+  are documented but not re-exported from the entry point; the README and llms.txt now
+  say CI should branch on `err.name` / `err.report.verdict`. A subpath export is a
+  1.2.0 candidate (recorded in `GPU_ROADMAP.md`).
+- **Tests: 44 -> 56.** Adds `05-frame-contract` (5, GG-05), `06-gate-schema` (6,
+  GG-10 + GG-03), and `07-docs-drift` (1, pins the documented surface + the schema
+  token). `test/torture.mjs`: the GG-10 pin is flipped to assert both directions
+  (mismatch -> `inconclusive`, matched pair still passes); the retention settle is now
+  a bounded, early-exiting retry (`MAX_SETTLE_ROUNDS = 8`) that a real leak still
+  fails; and V5 now spawns a **fourth** mutant, `retain`, as the leak-direction
+  control for that settle. The zero-allocation hot path is re-proven after the frame
+  guards: V3a/V3b major-GC count stays exactly 0.
+
 ## [1.1.0] - 2026-08-18
 
 Torture harness. No runtime behavior change -- `GpuProfiler`, `GpuTimerPool`, and

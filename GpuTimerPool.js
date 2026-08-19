@@ -15,8 +15,10 @@
  * every one).
  *
  * BROWSER ONLY: this touches a live WebGL2 context. Its state machine (cycling,
- * lag, disjoint-drop, no-leak) is unit-tested headlessly with a mock gl; the actual
- * nanosecond timings are validated by a Playwright smoke test against a real GPU.
+ * lag, disjoint-drop, no-leak) is unit-tested headlessly against a mock gl in
+ * test/03-timer-pool.test.mjs. The absolute nanosecond values come from the
+ * driver's TIME_ELAPSED_EXT and are not asserted by this package -- there is no
+ * WebGL2 under node, so no real-GPU test ships here.
  *
  * Constraint honored: only one TIME_ELAPSED query may be active at a time (no
  * nesting). begin() starts the active query; end() ends it; finished queries wait

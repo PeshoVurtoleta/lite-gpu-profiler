@@ -20,6 +20,9 @@
  *  - Call beginFrame()/endFrame() every frame (including frames that draw
  *    nothing); call recordDraw/recordUpload only when work actually happens, so
  *    "frames drawn vs skipped" is recoverable from the drawCalls ring.
+ *  - An unpaired begin/end call records nothing: a redundant beginFrame()
+ *    preserves the frame in flight, and an endFrame() with no open frame is
+ *    ignored -- a broken bracket never fabricates a phantom frame.
  *  - Not safe to use after destroy().
  *
  * Copyright (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
@@ -78,8 +81,13 @@ export class GpuProfiler {
     /** @returns {number} number of tracked counters */
     get counterCount() { return this._counterRings.length; }
 
-    /** Begin a frame: clear per-frame counter accumulators. */
+    /**
+     * Begin a frame: clear per-frame counter accumulators. A redundant call on an
+     * already-open frame is ignored -- it preserves the accumulation in flight
+     * rather than discarding it. Unpaired begin/end records nothing.
+     */
     beginFrame() {
+        if (this._frameOpen) return;
         this._accum.fill(0);
         this._frameOpen = true;
     }
@@ -123,8 +131,13 @@ export class GpuProfiler {
         if (Number.isFinite(ms) && ms >= 0) this.gpuMsRing.push(ms);
     }
 
-    /** End a frame: flush per-frame counter totals to their rings. */
+    /**
+     * End a frame: flush per-frame counter totals to their rings. An unpaired call
+     * (no open frame, or after reset()/destroy()) is ignored -- it records nothing,
+     * so a broken bracket never fabricates a zeroed phantom frame.
+     */
     endFrame() {
+        if (!this._frameOpen) return;
         const rings = this._counterRings;
         const accum = this._accum;
         for (let i = 0; i < rings.length; i++) rings[i].push(accum[i]);
