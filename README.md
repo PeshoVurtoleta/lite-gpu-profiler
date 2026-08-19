@@ -209,9 +209,10 @@ are incomparable and short-circuit to `inconclusive` before any rule runs (two
 un-stamped summaries are treated as comparable). A misspelled rule path throws
 `GpuRuleError` before anything is evaluated. `assertNoGpuRegression` throws
 `GpuRegressionError` on a `fail` and `GpuInconclusiveError` on an `inconclusive`, so CI
-can tell "did not measure" from "regressed" from "clean". Those error classes are not
-exported from the package entry point, so branch CI on `err.name === 'GpuRegressionError'`
-/ `'GpuInconclusiveError'` and on `err.report.verdict`, not on `instanceof`.
+can tell "did not measure" from "regressed" from "clean". Those error classes are
+exported from the package entry point since 1.2.0, so `err instanceof GpuInconclusiveError`
+works; `err.name === 'GpuRegressionError'` / `'GpuInconclusiveError'` and `err.report.verdict`
+remain available for CI that prefers not to import.
 
 The report also carries a `warnings` array (always present, never affecting
 `verdict`/`ok`): an `exact` rule whose operands reach 2^24 is flagged, because the

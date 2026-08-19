@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.0] - 2026-08-19
+
+Additive public surface -- the first minor. GG-12 is closed by forwarding six
+already-`export`ed `GpuGate.js` names through the package entry point, so this is a
+minor (new public surface), not a patch. No runtime behaviour changed: the hot path
+(`recordDraw`/`recordUpload`/`add`/`recordGpuTime`/`endFrame`) is byte-identical, and
+`GpuProfiler.js` / `GpuGate.js` / `GpuTimerPool.js` gain zero changed lines. No
+gate-semantics, verdict, frame-contract, timer-pool or rule-kind change.
+`GPU_SUMMARY_SCHEMA` stays `lite-gpu-profiler/summary@1`, so every baseline from
+1.0.x/1.1.x keeps gating.
+
+- **GG-12 (closed) -- gate error classes + field arrays now on the entry point.**
+  `index.js` re-exports `GpuRuleError`, `GpuRegressionError`, `GpuInconclusiveError`,
+  `GPU_FIELDS`, `COUNTER_FIELDS` and `TOP_FIELDS` (barrel: 6 -> 12 names), so
+  `err instanceof GpuInconclusiveError` works. `index.d.ts` already declared all six
+  via `export *`, so this makes the runtime match the types that shipped since 1.0.1;
+  it was a barrel gap, never a type gap. `err.name` / `err.report.verdict` remain for
+  CI that prefers not to import. The README and llms.txt reverse the 1.1.1
+  "not exported" note.
+- **Tests: 56 -> 57.** `07-docs-drift` now pins the surface off the barrel and adds an
+  `instanceof` round-trip test that proves both the `instanceof` and `err.name`
+  branching styles.
+
 ## [1.1.1] - 2026-08-19
 
 Fail-closed correctness + doc hygiene. No new caller-visible exception, no new

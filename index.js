@@ -4,4 +4,14 @@
  */
 export { GpuProfiler, GPU_SUMMARY_SCHEMA } from './GpuProfiler.js';
 export { GpuTimerPool } from './GpuTimerPool.js';
-export { checkGpuRegression, assertNoGpuRegression, GPU_DEFAULT_RULES } from './GpuGate.js';
+export {
+    checkGpuRegression,
+    assertNoGpuRegression,
+    GPU_DEFAULT_RULES,
+    GpuRuleError,
+    GpuRegressionError,
+    GpuInconclusiveError,
+    GPU_FIELDS,
+    COUNTER_FIELDS,
+    TOP_FIELDS
+} from './GpuGate.js';

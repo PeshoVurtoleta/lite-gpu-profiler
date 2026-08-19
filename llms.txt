@@ -25,6 +25,9 @@ timer extends the browser smoke test.
 - `GpuTimerPool` (subpath `@zakkster/lite-gpu-profiler/timer`, browser): the async
   timer-query pool.
 - `checkGpuRegression` / `assertNoGpuRegression` / `GPU_DEFAULT_RULES`: the gate.
+- `GpuRuleError` / `GpuRegressionError` / `GpuInconclusiveError` and `GPU_FIELDS` /
+  `COUNTER_FIELDS` / `TOP_FIELDS`: gate error classes + valid rule-field arrays,
+  entry-point exports since 1.2.0.
 
 ## GpuProfiler (headless core)
 
@@ -103,9 +106,9 @@ The report also carries a `warnings` array (always present, never affects
 verdict/ok): an `exact` rule whose operands reach 2^24 is flagged, because the
 Float32 counter ring quantizes there and a sub-quantum regression is invisible.
 
-The error classes are NOT exported from the package entry point, so CI branches on
-`err.name === 'GpuRegressionError'` / `'GpuInconclusiveError'` and on
-`err.report.verdict`, not on `instanceof`.
+The error classes are exported from the package entry point since 1.2.0, so
+`err instanceof GpuInconclusiveError` works; `err.name === 'GpuRegressionError'` /
+`'GpuInconclusiveError'` and `err.report.verdict` remain for CI that prefers not to import.
 
 Rule kinds per metric path (`counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`):
   { exact: true }      -> regress if candidate != baseline   (deterministic counters)
