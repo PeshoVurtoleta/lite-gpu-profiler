@@ -175,3 +175,102 @@ test('(D) GG-02: malformed rule paths throw; a well-formed untracked tag is inco
     assert.equal(r.regressions.length, 0);
     assert.ok(r.inconclusive.some((x) => x.metric === 'counter.drawcalls.max'));
 });
+
+// ---- GG-13: a metric present in baseline, absent in candidate, gated by
+// max/tolerance must fail closed to inconclusive -- not a silent green pass. ----
+
+test('(A) GG-13: vanished metric under max -> inconclusive, not a silent pass', () => {
+    const base = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    const cand = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    delete cand.counters.instances;   // baseline tracked it, candidate dropped it
+    assert.ok(base.counters.instances !== undefined);
+    const r = checkGpuRegression(base, cand, { 'counter.instances.max': { max: 1000 } });
+    assert.equal(r.verdict, 'inconclusive');
+    assert.equal(r.ok, false);
+    assert.equal(r.regressions.length, 0);
+    assert.equal(r.inconclusive.length, 1);
+    assert.equal(r.inconclusive[0].rule, 'max');
+    assert.equal(r.inconclusive[0].metric, 'counter.instances.max');
+    assert.equal(r.inconclusive[0].candidate, undefined);
+    assert.throws(
+        () => assertNoGpuRegression(base, cand, { 'counter.instances.max': { max: 1000 } }),
+        (e) => e instanceof GpuInconclusiveError && e.report && e.report.verdict === 'inconclusive'
+    );
+});
+
+test('(B) GG-13: same vanished metric under tolerance -> inconclusive', () => {
+    const base = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    const cand = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    delete cand.counters.instances;
+    const r = checkGpuRegression(base, cand, { 'counter.instances.max': { tolerance: 0.15 } });
+    assert.equal(r.verdict, 'inconclusive');
+    assert.equal(r.ok, false);
+    assert.equal(r.inconclusive.length, 1);
+    assert.equal(r.inconclusive[0].rule, 'tolerance');
+    assert.equal(r.inconclusive[0].metric, 'counter.instances.max');
+});
+
+test('(C) GG-13 control: exact on the identical input still fails (unchanged)', () => {
+    const base = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    const cand = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    delete cand.counters.instances;
+    const r = checkGpuRegression(base, cand, { 'counter.instances.max': { exact: true } });
+    assert.equal(r.verdict, 'fail');
+    assert.equal(r.regressions.length, 1);
+    assert.match(r.regressions[0].reason, /missing/);
+});
+
+test('(D) GG-13 control: both-undefined top-level field under max still skips (pass)', () => {
+    // Hand-rolled summaries with EQUAL schema tokens (or GG-10 short-circuits at :122)
+    // and NO framesSkipped on either side -- a TOP_FIELDS path, not a counter, so the
+    // counter guard at :145 cannot intercept. No basis either side -> plain skip.
+    const base = { schema: 'lite-gpu-profiler/summary@1', counters: {}, gpu: { samples: 0 } };
+    const cand = { schema: 'lite-gpu-profiler/summary@1', counters: {}, gpu: { samples: 0 } };
+    const r = checkGpuRegression(base, cand, { 'framesSkipped': { max: 10 } });
+    assert.equal(r.verdict, 'pass');
+    assert.equal(r.ok, true);
+    assert.equal(r.inconclusive.length, 0);
+    assert.equal(r.regressions.length, 0);
+});
+
+// ---- QA boundary coverage: A1 names TOP_FIELDS and gpu.samples explicitly as the
+// other two holes the counter guard cannot see; pin the forward-vanish for both, on
+// real captures, not just the counter case above. ----
+
+test('(E) GG-13: vanished TOP_FIELDS metric (framesSkipped) under max -> inconclusive', () => {
+    const base = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    const cand = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    assert.equal(typeof base.framesSkipped, 'number');
+    delete cand.framesSkipped;   // baseline tracked it, candidate dropped the field
+    const r = checkGpuRegression(base, cand, { framesSkipped: { max: 10 } });
+    assert.equal(r.verdict, 'inconclusive');
+    assert.equal(r.ok, false);
+    assert.equal(r.regressions.length, 0);
+    assert.equal(r.inconclusive.length, 1);
+    assert.equal(r.inconclusive[0].rule, 'max');
+    assert.equal(r.inconclusive[0].metric, 'framesSkipped');
+    assert.equal(r.inconclusive[0].candidate, undefined);
+    assert.throws(
+        () => assertNoGpuRegression(base, cand, { framesSkipped: { max: 10 } }),
+        (e) => e instanceof GpuInconclusiveError && e.report && e.report.verdict === 'inconclusive'
+    );
+});
+
+test('(F) GG-13: vanished gpu.samples under tolerance -> inconclusive (the gpu.* guard exempts samples)', () => {
+    const base = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    const cand = capture({ uploadFloats: 8, drawInstances: 100, gpuMs: 1.0 });
+    assert.ok(base.gpu.samples > 0);
+    delete cand.gpu;   // baseline measured GPU time, candidate's gpu object vanished entirely
+    const r = checkGpuRegression(base, cand, { 'gpu.samples': { tolerance: 0.15 } });
+    assert.equal(r.verdict, 'inconclusive');
+    assert.equal(r.ok, false);
+    assert.equal(r.regressions.length, 0);
+    assert.equal(r.inconclusive.length, 1);
+    assert.equal(r.inconclusive[0].rule, 'tolerance');
+    assert.equal(r.inconclusive[0].metric, 'gpu.samples');
+    assert.equal(r.inconclusive[0].candidate, undefined);
+    assert.throws(
+        () => assertNoGpuRegression(base, cand, { 'gpu.samples': { tolerance: 0.15 } }),
+        (e) => e instanceof GpuInconclusiveError && e.report && e.report.verdict === 'inconclusive'
+    );
+});

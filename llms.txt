@@ -97,14 +97,18 @@ a gpu.* stat with gpu.samples === 0 (headless CI, no timer extension), a poisone
 non-finite/null stat, or a counter tag tracked by neither summary -- routes to
 inconclusive, never a green pass. Two summaries whose `schema` tokens differ are
 incomparable and short-circuit to inconclusive before any rule runs (undefined vs
-undefined is NOT a mismatch: two hand-rolled summaries from the same producer).
+undefined is NOT a mismatch: two hand-rolled summaries from the same producer). A
+metric present in the baseline but absent from the candidate (a field dropped or
+renamed across versions) cannot be bounded: it routes to inconclusive under
+max/tolerance and to a regression under exact, never a silent pass.
 assertNoGpuRegression throws GpuRegressionError on 'fail' and GpuInconclusiveError on
 'inconclusive' (both carry .report). A misspelled rule path throws GpuRuleError
 ("valid paths are ...") before any evaluation.
 
 The report also carries a `warnings` array (always present, never affects
-verdict/ok): an `exact` rule whose operands reach 2^24 is flagged, because the
-Float32 counter ring quantizes there and a sub-quantum regression is invisible.
+verdict/ok): a rule of any kind (exact, max or tolerance) whose operands reach 2^24
+is flagged, because the Float32 counter ring quantizes there and a sub-quantum
+regression is invisible at this magnitude.
 
 The error classes are exported from the package entry point since 1.2.0, so
 `err instanceof GpuInconclusiveError` works; `err.name === 'GpuRegressionError'` /

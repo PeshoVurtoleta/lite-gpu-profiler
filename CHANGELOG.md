@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.2.1] - 2026-08-20
+
+Fail-closed correctness + doc hygiene. No new caller-visible exception, no new module
+export, no new report field, and the hot path
+(`recordDraw`/`recordUpload`/`add`/`recordGpuTime`/`endFrame` and `GpuTimerPool`
+`begin`/`end`) is byte-identical -- `GpuProfiler.js` and `GpuTimerPool.js` gain zero
+changed lines. So this is a patch, on the GG-10 precedent: GG-10 (schema mismatch)
+shipped as the patch 1.1.1 under "making a fail-open fail-closed is fixing WRONG
+OUTPUT, hence a patch." GG-13 is the identical class -- it flips a currently-green
+gate on a vanished metric to `inconclusive`/throw, reusing the existing tri-state and
+`GpuInconclusiveError`, adding no public surface. `.d.ts` is unchanged
+(`GpuGate.d.ts` already typed the `rule` values and `warnings`). `GPU_SUMMARY_SCHEMA`
+stays `lite-gpu-profiler/summary@1`, so every baseline from 1.0.x/1.1.x/1.2.0 keeps
+gating.
+
+- **GG-13 (S1, closed) -- vanished-metric fail-open in the max/tolerance leg.** The
+  `exact` leg already treated "baseline tracked this metric, candidate no longer
+  reports it" as a regression, but the `max`/`tolerance` leg hit
+  `if (cand === undefined) continue;` and silently PASSED -- a green verdict on state
+  the candidate never measured, the exact thing the fail-closed contract forbids. The
+  loop now splits that branch: `base` present and `cand` absent routes to
+  `inconclusive` (`rule: <kind>`, "metric present in baseline, absent in candidate --
+  nothing to bound"); both-undefined still skips (no basis either side). Reachable
+  where a gate is actually used -- a stored baseline compared against a later
+  candidate whose field set drifted. `assertNoGpuRegression` now throws
+  `GpuInconclusiveError` instead of returning green. The counter/gpu/poisoned guards
+  keep priority; the exact leg is untouched.
+- **GG-14 (S3, closed) -- README ASCII sweep + a permanent byte guard.** `README.md`
+  shipped with 50 ASCII-law violations (em-dashes, arrows, superscripts, a middot,
+  a copyright sign); all are transliterated to ASCII (`--`, `->`/`<-`, `^`, `(c)`,
+  `...`), keeping only the two law-permitted `U+00D7`. `07-docs-drift` now enumerates
+  every codepoint in `README.md` + `llms.txt` at runtime and fails on any cp > 127
+  outside `{U+00D7, U+00B5}`, naming file + offset, so the drift cannot recur.
+- **GG-15 (S3, closed) -- precision advisory now covers all three rule kinds.** The
+  `>= 2^24` Float32-quantization advisory was nested inside the `if (rule.exact)`
+  block, so a `max`/`tolerance` operand from the same ring at the same magnitude got
+  no warning. The advisory is hoisted above the rule-kind branch with `rule: <kind>`;
+  it remains verdict-neutral (extends `warnings[]` only, never `ok`/`verdict`) and the
+  exact-leg emission is unchanged.
+- **Tests: 57 -> 66.** `02-gate` adds GG-13 coverage both directions -- a vanished
+  metric routes to `inconclusive` under `max`/`tolerance` for a counter, a top-level
+  field (`framesSkipped`), and `gpu.samples`, while `exact` still fails and a
+  both-undefined top field still passes; `06-gate-schema` adds the GG-15 max/tolerance
+  precision-advisory controls (operand >= 2^24 -> one warning, verdict-neutral);
+  `07-docs-drift` adds the byte-level ASCII guard. The torture harness gains a V1
+  GG-13 degenerate and a fifth `vanish` mutant that restores the old skip and must
+  exit non-zero.
+
 ## [1.2.0] - 2026-08-19
 
 Additive public surface -- the first minor. GG-12 is closed by forwarding six

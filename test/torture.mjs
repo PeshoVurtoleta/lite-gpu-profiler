@@ -16,8 +16,10 @@
 //   V0  surface conformance -- every documented rule path is evaluated, a typo
 //       throws, and rejecting it leaves the valid-path verdict untouched.
 //   V1  fail-closed degenerates -- samples===0, non-finite recordGpuTime, empty
-//       and single-sample captures, and a schema mismatch that routes to
-//       inconclusive (GG-10, fixed in 1.1.1; both directions pinned).
+//       and single-sample captures, a schema mismatch that routes to inconclusive
+//       (GG-10, fixed in 1.1.1), and a metric present in baseline but vanished from
+//       the candidate that routes to inconclusive under max/tolerance (GG-13, fixed
+//       in 1.2.1; both directions pinned).
 //   V3a profiler hot path -- steady instance stepped HOT times under GcProfiler,
 //       gated on checkNoGc(maxMajor:0,maxPauseMs:4). A zero-alloc hot path forces
 //       no major GC; a retaining variant forces majors. (maxBytesPerOp:0 is NOT
@@ -34,10 +36,11 @@
 //       a bounded-retry settle (gc + macrotask, up to MAX_SETTLE_ROUNDS, early-exit
 //       the instant the tracker drains -- a real leak burns all rounds and FAILS).
 //       lite-leak OUTSIDE every measured window.
-//   V5  controls -- four mutants (allocating hot path, legacy binary gate,
-//       permissive validator, retaining tracker) each spawned in a child that MUST
-//       exit non-zero. The retain mutant is the leak-direction control for the
-//       bounded settle: a genuine leak never drains and fails the tier.
+//   V5  controls -- five mutants (allocating hot path, legacy binary gate,
+//       permissive validator, retaining tracker, vanish-skip gate) each spawned in
+//       a child that MUST exit non-zero. The retain mutant is the leak-direction
+//       control for the bounded settle: a genuine leak never drains and fails the
+//       tier. The vanish mutant restores the old :193 skip and MUST fail V1.
 //
 // A tier reporting 0 checks is a FAIL. No gate output is a FAIL.
 //
@@ -91,6 +94,8 @@ const gateV0 = MUTANT === 'validator' ? permissiveValidatorGate
     : MUTANT === 'gate' ? legacyBinaryGate
         : checkGpuRegression;
 const gateV1 = MUTANT === 'gate' ? legacyBinaryGate : checkGpuRegression;
+// GG-13 vanish control: restores the old :193 skip through a wrapper (see below).
+const gateVanish = MUTANT === 'vanish' ? vanishSkipGate : checkGpuRegression;
 const allocMutant = MUTANT === 'alloc';
 // Leak-direction control for the bounded settle (GG-11): retain every tracked
 // profiler so the tracker never drains, exhausting all settle rounds and failing V3c.
@@ -124,6 +129,22 @@ function permissiveValidatorGate(baseline, candidate, rules) {
         }
         throw e;
     }
+}
+
+// The vanish-skip gate: the GG-13 fail-open control. A wrapper cannot re-insert
+// `continue` at GpuGate.js:193, so it restores that old silent skip through the
+// only door a wrapper has -- it strips every GG-13 vanish inconclusive (a
+// max/tolerance entry whose reason names the vanish) from the real report and
+// recomputes verdict/ok, collapsing the fail-closed inconclusive back to the
+// silent green pass that V1 must reject. Distinct from legacyBinaryGate, which
+// collapses ALL inconclusive (schema, zero-sample, poisoned, ...) to pass.
+function vanishSkipGate(baseline, candidate, rules) {
+    const r = checkGpuRegression(baseline, candidate, rules);
+    const kept = r.inconclusive.filter((x) =>
+        !((x.rule === 'max' || x.rule === 'tolerance') && / nothing to bound$/.test(x.reason)));
+    if (kept.length === r.inconclusive.length) return r;
+    const verdict = r.regressions.length ? 'fail' : kept.length ? 'inconclusive' : 'pass';
+    return { ok: verdict === 'pass', verdict, regressions: r.regressions, inconclusive: kept, warnings: r.warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +331,53 @@ async function tierV1() {
     // matched direction (the control): the pre-pass leaves comparable pairs alone.
     ok(checkGpuRegression(baseSummary(), baseSummary(), schemaRules).verdict === 'pass',
         'V1 GG-10 matched schema pair still passes');
+
+    // (6) GG-13 (fixed in 1.2.1): a metric present in baseline but ABSENT from the
+    // candidate cannot be bounded by max/tolerance -- fail closed to inconclusive,
+    // not the old silent green pass at :193. The real gate is pinned on
+    // rule/metric/reason; at least one check runs through gateVanish so the
+    // 'vanish' mutant (which restores the old skip) trips HERE. Controls: exact on
+    // the same input still fails, and a both-undefined TOP-LEVEL field still skips.
+    const vanBase = baseSummary();
+    const vanDropped = baseSummary();
+    delete vanDropped.counters.instances;   // baseline tracks it, candidate dropped it
+    const vanRules = { 'counter.instances.max': { max: 1000 } };
+
+    // mutant-sensitive: real gate -> inconclusive; vanishSkipGate strips it back to
+    // a silent pass, so this assertion is exactly what the 'vanish' mutant fails on.
+    ok(gateVanish(vanBase, vanDropped, vanRules).verdict !== 'pass',
+        'V1 GG-13: vanished metric under max must not pass');
+
+    const rVan = checkGpuRegression(vanBase, vanDropped, vanRules);
+    ok(rVan.verdict === 'inconclusive', 'V1 GG-13 vanish verdict=' + rVan.verdict);
+    ok(rVan.regressions.length === 0, 'V1 GG-13 no regressions, got ' + rVan.regressions.length);
+    ok(rVan.inconclusive.length === 1, 'V1 GG-13 one inconclusive entry, got ' + rVan.inconclusive.length);
+    ok(rVan.inconclusive[0].rule === 'max', 'V1 GG-13 entry rule=' + rVan.inconclusive[0].rule);
+    ok(rVan.inconclusive[0].metric === 'counter.instances.max', 'V1 GG-13 entry metric=' + rVan.inconclusive[0].metric);
+    ok(rVan.inconclusive[0].candidate === undefined, 'V1 GG-13 entry candidate must be undefined');
+    const eVan = throws(() => assertNoGpuRegression(vanBase, vanDropped, vanRules),
+        GpuInconclusiveError, 'V1 GG-13 asserts GpuInconclusiveError');
+    ok(!!eVan.report, 'V1 GG-13 inconclusive error carries .report');
+
+    // tolerance direction routes the same way.
+    ok(checkGpuRegression(vanBase, vanDropped, { 'counter.instances.max': { tolerance: 0.15 } }).inconclusive[0].rule === 'tolerance',
+        'V1 GG-13 tolerance direction inconclusive rule');
+
+    // control: exact on the identical input still FAILS (the exact leg is unchanged).
+    const rVanExact = checkGpuRegression(vanBase, vanDropped, { 'counter.instances.max': { exact: true } });
+    ok(rVanExact.verdict === 'fail', 'V1 GG-13 control exact still fails, got ' + rVanExact.verdict);
+    ok(rVanExact.regressions.length === 1, 'V1 GG-13 control exact one regression');
+
+    // control: both-undefined on a TOP_FIELDS path still SKIPS to pass (no basis
+    // either side). A counter fixture is intercepted by the :145 guard and proves
+    // nothing about the skip branch, so use framesSkipped, absent on both sides.
+    const noFieldBase = baseSummary();
+    const noFieldCand = baseSummary();
+    delete noFieldBase.framesSkipped;
+    delete noFieldCand.framesSkipped;
+    const rSkip = checkGpuRegression(noFieldBase, noFieldCand, { 'framesSkipped': { max: 10 } });
+    ok(rSkip.verdict === 'pass', 'V1 GG-13 both-undefined top field still passes, got ' + rSkip.verdict);
+    ok(rSkip.inconclusive.length === 0, 'V1 GG-13 both-undefined no inconclusive');
 }
 
 // ---------------------------------------------------------------------------
@@ -549,7 +617,7 @@ async function tierV3c() {
 // non-zero. Injection is env + spawnSync, never an in-process patch.
 // ---------------------------------------------------------------------------
 async function tierV5() {
-    for (const name of ['alloc', 'gate', 'validator', 'retain']) {
+    for (const name of ['alloc', 'gate', 'validator', 'retain', 'vanish']) {
         const res = spawnSync(process.execPath, ['--expose-gc', fileURLToPath(import.meta.url)], {
             env: Object.assign({}, process.env, { TORTURE_MUTANT: name }),
             encoding: 'utf8'

@@ -168,18 +168,18 @@ export function checkGpuRegression(baseline, candidate, rules = GPU_DEFAULT_RULE
             continue;
         }
 
+        // GG-03/GG-15: above 2^24 the Float32 counter ring's quantum exceeds 1, so a
+        // gate is blind to a sub-quantum regression. The comparison is still
+        // correctly measured (equal-vs-equal stays valid); emit a precision advisory
+        // that never affects verdict/ok, for every rule kind, pass or fail.
+        if ((typeof base === 'number' && base >= EXACT_PRECISION_CEILING) ||
+            (typeof cand === 'number' && cand >= EXACT_PRECISION_CEILING)) {
+            warnings.push({
+                metric: path, baseline: base, candidate: cand, rule: kind,
+                reason: 'operand >= 2^24: Float32 counter ring quantizes here, so a regression smaller than the quantum is undetectable at this magnitude'
+            });
+        }
         if (rule.exact) {
-            // GG-03: above 2^24 the Float32 counter ring's quantum exceeds 1, so an
-            // exact gate is blind to a sub-quantum regression. The comparison is still
-            // correctly measured (equal-vs-equal stays valid); emit a precision
-            // advisory that never affects verdict/ok, whether the compare passes or fails.
-            if ((typeof base === 'number' && base >= EXACT_PRECISION_CEILING) ||
-                (typeof cand === 'number' && cand >= EXACT_PRECISION_CEILING)) {
-                warnings.push({
-                    metric: path, baseline: base, candidate: cand, rule: 'exact',
-                    reason: 'operand >= 2^24: Float32 counter ring quantizes here, so a regression smaller than the quantum is undetectable by an exact gate'
-                });
-            }
             // An exact rule guards a specific metric. If the baseline tracked it and the
             // candidate no longer reports it, the metric VANISHED -- that is a regression,
             // not a silent pass. (Baseline also lacks it -> no basis -> skip.)
@@ -190,7 +190,15 @@ export function checkGpuRegression(baseline, candidate, rules = GPU_DEFAULT_RULE
             }
             continue;
         }
-        if (cand === undefined) continue;                     // max/tolerance: no metric -> nothing to bound
+        if (cand === undefined) {
+            // GG-13: baseline tracked this metric but the candidate no longer reports
+            // it -- an unmeasured value cannot be bounded. Fail closed to inconclusive
+            // (mirrors the exact leg), not a silent pass. Both-undefined -> no basis -> skip.
+            if (base !== undefined) {
+                inconclusive.push({ metric: path, baseline: base, candidate: undefined, rule: kind, reason: 'metric present in baseline, absent in candidate -- nothing to bound' });
+            }
+            continue;
+        }
         if (rule.max !== undefined) {
             if (cand > rule.max) {
                 regressions.push({ metric: path, baseline: base, candidate: cand, rule: 'max', reason: `${cand} > ceiling ${rule.max}` });

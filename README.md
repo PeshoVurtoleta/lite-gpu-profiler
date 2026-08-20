@@ -13,8 +13,8 @@
 [![WebGL2](https://img.shields.io/badge/WebGL2-timer_query-8250df)](#gputimerpool--browser-timer)
 [![types](https://img.shields.io/badge/types-included-3178c6)](./index.d.ts)
 
-Zero-GC WebGL2 render-path telemetry. A passive **instrument** — it *measures* the work the
-GPU is asked to do — and the counterpart to [`@zakkster/lite-vram`](https://www.npmjs.com/package/@zakkster/lite-vram),
+Zero-GC WebGL2 render-path telemetry. A passive **instrument** -- it *measures* the work the
+GPU is asked to do -- and the counterpart to [`@zakkster/lite-vram`](https://www.npmjs.com/package/@zakkster/lite-vram),
 the active **manager** that *governs* texture memory. Together they cover the two questions a
 render loop keeps asking: *how much am I uploading and drawing*, and *is that memory safe*.
 
@@ -24,8 +24,8 @@ not.** So the two live in two places, and gate two different ways.
 ```mermaid
 flowchart TB
     subgraph src["lite-gl render path"]
-        UP["sink.upload → floatCount"]
-        DR["sink.draw → instanceCount"]
+        UP["sink.upload -> floatCount"]
+        DR["sink.draw -> instanceCount"]
         GLD["gl.drawArrays"]
     end
 
@@ -39,8 +39,8 @@ flowchart TB
 
     CORE --> SUM["summary()"]
     SUM --> GATE{"checkGpuRegression()"}
-    GATE --> EX["counters — exact · headless · CI"]
-    GATE --> TOL["gpu.p99 — 15% tolerance · browser"]
+    GATE --> EX["counters -- exact - headless - CI"]
+    GATE --> TOL["gpu.p99 -- 15% tolerance - browser"]
 ```
 
 ## Two telemetry kinds, two homes
@@ -49,14 +49,14 @@ flowchart TB
 | --- | --- | --- |
 | **What** | draw calls, instances, floats uploaded | wall-clock nanoseconds on the GPU |
 | **Source** | integers the caller already has at flush time | `EXT_disjoint_timer_query_webgl2` |
-| **Needs a GL context?** | no — recorded in the GL-agnostic core | yes — browser only |
+| **Needs a GL context?** | no -- recorded in the GL-agnostic core | yes -- browser only |
 | **Determinism** | identical on every host and run | noisy; varies frame to frame |
 | **Where it runs** | headless, in CI, today | live context, resolved asynchronously |
-| **How it gates** | **exactly** — zero tolerance, no noise floor | by fractional **tolerance** |
+| **How it gates** | **exactly** -- zero tolerance, no noise floor | by fractional **tolerance** |
 
 This mirrors lite-gl's own split: the counters extend its headless, tested core; the timer
 extends its browser smoke test. You get a hard, deterministic gate on the numbers that *are*
-deterministic, and a tolerant gate on the one number that isn't — instead of pretending GPU
+deterministic, and a tolerant gate on the one number that isn't -- instead of pretending GPU
 time is reproducible and flaking your CI, or giving up on gating draw calls because they happen
 to sit next to a noisy measurement.
 
@@ -66,7 +66,7 @@ to sit next to a noisy measurement.
 npm install @zakkster/lite-gpu-profiler
 ```
 
-Runtime dependencies are two zero-GC siblings from the same ecosystem —
+Runtime dependencies are two zero-GC siblings from the same ecosystem --
 [`@zakkster/lite-ring-buffer`](https://www.npmjs.com/package/@zakkster/lite-ring-buffer)
 (the frame rings) and [`@zakkster/lite-stats-math`](https://www.npmjs.com/package/@zakkster/lite-stats-math)
 (the percentile math). ESM only.
@@ -81,8 +81,8 @@ const gpu = new GpuProfiler(1024);   // ring capacity in frames
 
 // per frame, driven from lite-gl's reactiveField / sink:
 gpu.beginFrame();
-gpu.recordUpload(dirtyFloatCount);   // ← sink.upload(data, off, floatCount, ...)
-gpu.recordDraw(instanceCount);       // ← sink.draw(count)   (only when a draw happens)
+gpu.recordUpload(dirtyFloatCount);   // <- sink.upload(data, off, floatCount, ...)
+gpu.recordDraw(instanceCount);       // <- sink.draw(count)   (only when a draw happens)
 gpu.endFrame();
 
 // browser: wrap the real draw so GPU time flows back in
@@ -95,19 +95,19 @@ const summary = gpu.summary({ label: 'my-scene' });
 ## The metric that matters: `floatsUploaded`
 
 Command counters exist mostly to protect one property: **dirty-range batching.** lite-gl
-uploads only the slice of the instance buffer that changed. If that regresses — a one-instance
-change quietly re-uploading the whole buffer — nothing *breaks*, the frame just silently costs
+uploads only the slice of the instance buffer that changed. If that regresses -- a one-instance
+change quietly re-uploading the whole buffer -- nothing *breaks*, the frame just silently costs
 100× the bandwidth it should.
 
 `floatsUploaded` makes that falsifiable. A single-instance change must upload exactly one stride,
 never the whole buffer, and the default gate pins `counter.floatsUploaded.max` **exactly**.
-Likewise `framesDrawn` / `framesSkipped` are derived from the draw-call ring — a frame that
-skipped its draw recorded no `drawCalls` — so the "redraw only on change" claim is verifiable
+Likewise `framesDrawn` / `framesSkipped` are derived from the draw-call ring -- a frame that
+skipped its draw recorded no `drawCalls` -- so the "redraw only on change" claim is verifiable
 without an extra counter.
 
 ## API
 
-### `GpuProfiler` — headless core
+### `GpuProfiler` -- headless core
 
 The counter and GPU-time aggregator. No GL required; safe to run in node and CI.
 
@@ -115,14 +115,14 @@ The counter and GPU-time aggregator. No GL required; safe to run in node and CI.
 new GpuProfiler(capacity?, { counters? })
 ```
 
-- `capacity` — ring length in frames (how much history the summary spans).
-- `counters` — the tracked tags; defaults to `['drawCalls', 'instances', 'floatsUploaded']`.
+- `capacity` -- ring length in frames (how much history the summary spans).
+- `counters` -- the tracked tags; defaults to `['drawCalls', 'instances', 'floatsUploaded']`.
 
 | Method | Purpose |
 | --- | --- |
-| `beginFrame()` | clear per-frame accumulators — call every frame |
-| `recordDraw(instanceCount?)` | `drawCalls += 1`, `instances += n` — call only when a draw happens |
-| `recordUpload(floatCount)` | `floatsUploaded += n` — the dirty-range signal |
+| `beginFrame()` | clear per-frame accumulators -- call every frame |
+| `recordDraw(instanceCount?)` | `drawCalls += 1`, `instances += n` -- call only when a draw happens |
+| `recordUpload(floatCount)` | `floatsUploaded += n` -- the dirty-range signal |
 | `add(tag, n?)` | bump an arbitrary tracked counter |
 | `recordGpuTime(ms)` | ingest a resolved GPU-time sample from the pool |
 | `endFrame()` | flush the frame's totals into the rings |
@@ -131,7 +131,7 @@ new GpuProfiler(capacity?, { counters? })
 
 Getters: `counterCount`, `capacity`, `counterTags`.
 
-### `GpuTimerPool` — browser timer
+### `GpuTimerPool` -- browser timer
 
 Subpath `@zakkster/lite-gpu-profiler/timer`. Wraps the real draw and feeds resolved GPU time
 back to `recordGpuTime`.
@@ -140,22 +140,22 @@ back to `recordGpuTime`.
 new GpuTimerPool(gl, { poolSize?, onSample? })
 ```
 
-- `poolSize` — how many queries may be in flight (bounds resolution lag; default `4`, min `2`).
-- `onSample(ms)` — called with each resolved sample.
+- `poolSize` -- how many queries may be in flight (bounds resolution lag; default `4`, min `2`).
+- `onSample(ms)` -- called with each resolved sample.
 
 | Method | Purpose |
 | --- | --- |
-| `begin()` | resolve the oldest finished query, then open a new one — call *before* the draw |
-| `end()` | end the open query — call *after* the draw |
+| `begin()` | resolve the oldest finished query, then open a new one -- call *before* the draw |
+| `end()` | end the open query -- call *after* the draw |
 | `onSample(cb)` | register the sample callback |
 | `dispose()` | delete every query (no leaked handles) |
 
-Getter: `supported` — `false` when the extension is absent, in which case `begin`/`end` are
+Getter: `supported` -- `false` when the extension is absent, in which case `begin`/`end` are
 no-ops and the counters still work.
 
-WebGL2 timer queries are asynchronous — a result lands one to three frames after `end()`. The
+WebGL2 timer queries are asynchronous -- a result lands one to three frames after `end()`. The
 pool keeps a fixed ring of pre-allocated query objects, starts **one** `TIME_ELAPSED` region per
-frame (only one may be active at a time — no nesting), reads each result late, and **drops** any
+frame (only one may be active at a time -- no nesting), reads each result late, and **drops** any
 frame whose `GPU_DISJOINT` flag is set, because a context switch or thermal throttle makes that
 timing meaningless. It allocates nothing after construction.
 
@@ -180,14 +180,14 @@ gpu.summary({ label: 'my-scene' })
 ```
 
 Counter rings are `Float32`-backed, so per-frame counter **values** are exact up to
-2²⁴ (16,777,216) — e.g. 2M instances × 8 floats. Beyond that they quantize *deterministically*:
+2^24 (16,777,216) -- e.g. 2M instances × 8 floats. Beyond that they quantize *deterministically*:
 identical runs still gate equal; only the printed value rounds. An `exact` gate rule
 whose operands reach this ceiling is surfaced in the report's `warnings` array (see the
 regression gate below), because a sub-quantum regression there is undetectable.
 
 ## Regression gate
 
-Compare a candidate summary against a stored baseline. Same posture as `lite-profiler` — the
+Compare a candidate summary against a stored baseline. Same posture as `lite-profiler` -- the
 counters slot into the same matrix.
 
 ```js
@@ -206,7 +206,10 @@ The gate is **fail-closed**. A rule it cannot evaluate against a real measuremen
 extension), a poisoned non-finite/null stat, or a counter tag neither summary tracks --
 routes to `inconclusive`, never a green pass. Two summaries whose `schema` tokens differ
 are incomparable and short-circuit to `inconclusive` before any rule runs (two
-un-stamped summaries are treated as comparable). A misspelled rule path throws
+un-stamped summaries are treated as comparable). A metric present in the baseline
+but absent from the candidate (a field dropped or renamed across versions) cannot
+be bounded: it routes to `inconclusive` under `max`/`tolerance` and to a regression
+under `exact`, never a silent pass. A misspelled rule path throws
 `GpuRuleError` before anything is evaluated. `assertNoGpuRegression` throws
 `GpuRegressionError` on a `fail` and `GpuInconclusiveError` on an `inconclusive`, so CI
 can tell "did not measure" from "regressed" from "clean". Those error classes are
@@ -215,17 +218,18 @@ works; `err.name === 'GpuRegressionError'` / `'GpuInconclusiveError'` and `err.r
 remain available for CI that prefers not to import.
 
 The report also carries a `warnings` array (always present, never affecting
-`verdict`/`ok`): an `exact` rule whose operands reach 2^24 is flagged, because the
-`Float32` counter ring quantizes there and a regression smaller than the quantum is
-invisible to an exact gate -- see the counter-precision note above.
+`verdict`/`ok`): a rule of any kind (`exact`, `max` or `tolerance`) whose operands
+reach 2^24 is flagged, because the `Float32` counter ring quantizes there and a
+regression smaller than the quantum is invisible at this magnitude -- see the
+counter-precision note above.
 
-Rules are keyed by a metric path — `counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`:
+Rules are keyed by a metric path -- `counter.<tag>.<sum|max|min|avg|last>` or `gpu.<field>`:
 
 | Rule | Regresses when | For |
 | --- | --- | --- |
 | `{ exact: true }` | `candidate !== baseline` | deterministic counters |
 | `{ max: N }` | `candidate > N` | an absolute ceiling |
-| `{ tolerance: 0.15 }` | `(candidate − baseline) / baseline > 0.15` | noisy GPU time |
+| `{ tolerance: 0.15 }` | `(candidate - baseline) / baseline > 0.15` | noisy GPU time |
 
 The defaults gate the two claims that matter and nothing you'd have to babysit:
 
@@ -242,18 +246,18 @@ GPU_DEFAULT_RULES = {
 lite-gl draws the whole instanced field in one call per frame, so the sink's `draw()` *is* the
 frame boundary. Two seams:
 
-- **Counters — in the GL-agnostic core (headless, matrix-gated).** Where `GLBackend`'s sink is
+- **Counters -- in the GL-agnostic core (headless, matrix-gated).** Where `GLBackend`'s sink is
   called from `reactiveField.flush`, forward the arguments and bracket the frame:
 
   ```
-  upload(data, floatOffset, floatCount, instanceOffset, stride) → profiler.recordUpload(floatCount)
-  draw(count)                                                   → profiler.recordDraw(count)
-  // profiler.beginFrame() … profiler.endFrame() around the flush
+  upload(data, floatOffset, floatCount, instanceOffset, stride) -> profiler.recordUpload(floatCount)
+  draw(count)                                                   -> profiler.recordDraw(count)
+  // profiler.beginFrame() ... profiler.endFrame() around the flush
   ```
 
-- **GPU time — in the WebGL2 sink (browser).** In `createPointSink`, build
+- **GPU time -- in the WebGL2 sink (browser).** In `createPointSink`, build
   `new GpuTimerPool(gl, { onSample: (ms) => profiler.recordGpuTime(ms) })`, call `pool.begin()`
-  before `gl.drawArrays` and `pool.end()` after. Recreate the pool in `onContextRestored` —
+  before `gl.drawArrays` and `pool.end()` after. Recreate the pool in `onContextRestored` --
   queries die with the context.
 
 ## What's tested
@@ -261,7 +265,7 @@ frame boundary. Two seams:
 | Layer | How |
 | --- | --- |
 | Core counters + gate | `node:test`, headless, deterministic |
-| Timer-pool state machine | `node:test` against a mock GL — cycling, resolution lag, FIFO order, disjoint-drop, pool reuse (zero per-frame alloc), no leaked handles |
+| Timer-pool state machine | `node:test` against a mock GL -- cycling, resolution lag, FIFO order, disjoint-drop, pool reuse (zero per-frame alloc), no leaked handles |
 | Actual GPU nanoseconds | not verified here -- driver-reported via `EXT_disjoint_timer_query_webgl2`; no WebGL2 under node. The ns->ms conversion and FIFO ordering are covered by the mock-GL suite |
 
 ```bash
@@ -271,17 +275,17 @@ npm run test:gc # under --expose-gc
 
 ## The hot path
 
-`recordDraw` / `recordUpload` / `recordGpuTime` allocate nothing — each writes a `Float64`
+`recordDraw` / `recordUpload` / `recordGpuTime` allocate nothing -- each writes a `Float64`
 accumulator or pushes a single float into a ring. There is no per-frame garbage, which is the
 point: an instrument that allocated on the render path would perturb the very thing it measures.
 
 ## Scope (v1)
 
-v1 is **frame-level** — one GPU-time region per frame, matching lite-gl's single instanced draw.
+v1 is **frame-level** -- one GPU-time region per frame, matching lite-gl's single instanced draw.
 Per-pass timing (sequential queries) and pass-scoped counters are deferred. An optional dev-only
 GL-context monkey-patcher for automatic command counting during discovery is a separate
 supplemental tool; production gates run on the explicit API.
 
 ## License
 
-MIT © Zahary Shinikchiev
+MIT (c) Zahary Shinikchiev
